@@ -1,0 +1,29 @@
+// A math library — no main(), just functions
+
+fn square(n: i64) -> i64 {
+    return n * n
+}
+
+fn cube(n: i64) -> i64 {
+    return n * n * n
+}
+
+fn max(a: i64, b: i64) -> i64 {
+    if a > b { return a }
+    return b
+}
+
+fn min(a: i64, b: i64) -> i64 {
+    if a < b { return a }
+    return b
+}
+
+fn clamp(val: i64, lo: i64, hi: i64) -> i64
+    requires lo <= hi
+    ensures result >= lo
+    ensures result <= hi
+{
+    if val < lo { return lo }
+    if val > hi { return hi }
+    return val
+}

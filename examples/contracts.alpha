@@ -1,0 +1,51 @@
+// Alpha contracts: the spec IS the code
+
+fn fibonacci(n: i64) -> i64
+    example fibonacci(0) == 0
+    example fibonacci(1) == 1
+    example fibonacci(10) == 55
+    requires n >= 0
+    ensures result >= 0
+{
+    if n <= 1 { return n }
+    return fibonacci(n - 1) + fibonacci(n - 2)
+}
+
+fn abs_val(n: i64) -> i64
+    example abs_val(5) == 5
+    example abs_val(-3) == 3
+    example abs_val(0) == 0
+    ensures result >= 0
+{
+    if n < 0 { return 0 - n }
+    return n
+}
+
+fn divide(a: i64, b: i64) -> i64
+    example divide(10, 2) == 5
+    example divide(7, 3) == 2
+    requires b != 0
+{
+    return a / b
+}
+
+fn clamp(val: i64, lo: i64, hi: i64) -> i64
+    example clamp(5, 0, 10) == 5
+    example clamp(-1, 0, 10) == 0
+    example clamp(99, 0, 10) == 10
+    requires lo <= hi
+    ensures result >= lo
+    ensures result <= hi
+{
+    if val < lo { return lo }
+    if val > hi { return hi }
+    return val
+}
+
+fn main() {
+    // In normal mode, contracts are checked at runtime
+    println(fibonacci(10))
+    println(abs_val(-42))
+    println(divide(100, 7))
+    println(clamp(50, 0, 10))
+}

@@ -1,0 +1,19 @@
+struct Point {
+    x: f64
+    y: f64
+}
+
+fn distance(ax: f64, ay: f64, bx: f64, by: f64) -> f64 {
+    let dx = ax - bx
+    let dy = ay - by
+    return dx * dx + dy * dy
+}
+
+fn main() {
+    let p = Point { x: 3.0, y: 4.0 }
+    println(p.x)
+    println(p.y)
+
+    let d = distance(0.0, 0.0, p.x, p.y)
+    println(d)
+}

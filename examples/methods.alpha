@@ -1,0 +1,45 @@
+struct Vec2 {
+    x: f64
+    y: f64
+}
+
+impl Vec2 {
+    fn length_squared(&self) -> f64 {
+        return self.x * self.x + self.y * self.y
+    }
+
+    fn add(&self, other: Vec2) -> Vec2 {
+        return Vec2 {
+            x: self.x + other.x,
+            y: self.y + other.y
+        }
+    }
+
+    fn scale(&self, factor: f64) -> Vec2 {
+        return Vec2 {
+            x: self.x * factor,
+            y: self.y * factor
+        }
+    }
+
+    fn print_vec(&self) {
+        print("Vec2(")
+        print(self.x)
+        print(", ")
+        print(self.y)
+        println(")")
+    }
+}
+
+fn main() {
+    let a = Vec2 { x: 3.0, y: 4.0 }
+    let b = Vec2 { x: 1.0, y: 2.0 }
+
+    println(a.length_squared())
+
+    let c = a.add(b)
+    c.print_vec()
+
+    let d = a.scale(2.0)
+    d.print_vec()
+}

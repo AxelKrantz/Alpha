@@ -1,0 +1,9 @@
+import "math_lib.alpha"
+
+fn main() {
+    println(format("square(5) = {}", square(5)))
+    println(format("cube(3) = {}", cube(3)))
+    println(format("max(10, 20) = {}", max(10, 20)))
+    println(format("min(10, 20) = {}", min(10, 20)))
+    println(format("clamp(50, 0, 10) = {}", clamp(50, 0, 10)))
+}

@@ -1,0 +1,74 @@
+// Test the primitives needed for self-hosting the compiler
+
+fn test_strings() {
+    let a: str = "hello"
+    let b: str = "world"
+    let c = str_concat(a, " ")
+    let d = str_concat(c, b)
+    println(d)
+
+    // Also test + operator for strings
+    let e = "Alpha" + " " + "Lang"
+    println(e)
+
+    // String comparison
+    if a == "hello" {
+        println("str eq works")
+    }
+    if a != b {
+        println("str neq works")
+    }
+
+    // Character access
+    let ch = str_char_at(a, 0)
+    println(ch)
+
+    // Substring
+    let sub = str_substr(d, 0, 5)
+    println(sub)
+
+    // Contains
+    if str_contains(d, "world") {
+        println("contains works")
+    }
+
+    // Starts with
+    if str_starts_with(d, "hello") {
+        println("starts_with works")
+    }
+
+    // Length
+    println(len(d))
+}
+
+fn test_conversions() {
+    let n: i64 = 42
+    let s = i64_to_str(n)
+    println(s)
+
+    let back = str_to_i64("123")
+    println(back)
+}
+
+fn test_file_io() {
+    // Write a file
+    file_write("/tmp/alpha_test.txt", "Hello from Alpha!")
+
+    // Read it back
+    let contents = file_read("/tmp/alpha_test.txt")
+    println(contents)
+}
+
+fn test_math() {
+    let x: f64 = 9.0
+    let y = sqrt(x)
+    println(y)
+}
+
+fn main() {
+    test_strings()
+    test_conversions()
+    test_file_io()
+    test_math()
+    println("All self-host primitives working!")
+}

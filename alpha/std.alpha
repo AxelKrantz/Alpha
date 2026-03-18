@@ -1,0 +1,151 @@
+// Alpha Standard Library
+// Import with: import "std.alpha"
+
+// ============================================================
+// Math
+// ============================================================
+
+fn abs_val(n: i64) -> i64
+    ensures result >= 0
+{
+    if n < 0 { return 0 - n }
+    return n
+}
+
+fn min(a: i64, b: i64) -> i64 {
+    if a < b { return a }
+    return b
+}
+
+fn max(a: i64, b: i64) -> i64 {
+    if a > b { return a }
+    return b
+}
+
+fn clamp(val: i64, lo: i64, hi: i64) -> i64
+    requires lo <= hi
+    ensures result >= lo
+    ensures result <= hi
+{
+    if val < lo { return lo }
+    if val > hi { return hi }
+    return val
+}
+
+fn min_f64(a: f64, b: f64) -> f64 {
+    if a < b { return a }
+    return b
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { return a }
+    return b
+}
+
+fn abs_f64(n: f64) -> f64 {
+    if n < 0.0 { return 0.0 - n }
+    return n
+}
+
+// ============================================================
+// String utilities
+// ============================================================
+
+fn str_repeat(s: str, n: i64) -> str {
+    let mut parts: [str] = []
+    for _i in 0..n {
+        parts.push(s)
+    }
+    return parts.join("")
+}
+
+fn str_pad_left(s: str, width: i64, pad: str) -> str {
+    if s.len >= width { return s }
+    return str_repeat(pad, width - s.len) + s
+}
+
+fn str_pad_right(s: str, width: i64, pad: str) -> str {
+    if s.len >= width { return s }
+    return s + str_repeat(pad, width - s.len)
+}
+
+fn str_to_upper(s: str) -> str {
+    let mut result: [str] = []
+    for i in 0..s.len {
+        let c = s.char_at(i)
+        if c >= 97 and c <= 122 {
+            result.push(char_to_str(c - 32))
+        } else {
+            result.push(char_to_str(c))
+        }
+    }
+    return result.join("")
+}
+
+fn str_to_lower(s: str) -> str {
+    let mut result: [str] = []
+    for i in 0..s.len {
+        let c = s.char_at(i)
+        if c >= 65 and c <= 90 {
+            result.push(char_to_str(c + 32))
+        } else {
+            result.push(char_to_str(c))
+        }
+    }
+    return result.join("")
+}
+
+fn str_is_digit(c: i64) -> bool {
+    return c >= 48 and c <= 57
+}
+
+fn str_is_alpha(c: i64) -> bool {
+    return (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95
+}
+
+fn str_is_space(c: i64) -> bool {
+    return c == 32 or c == 9 or c == 10 or c == 13
+}
+
+// ============================================================
+// Array utilities
+// ============================================================
+
+fn range(start: i64, end: i64) -> [i64] {
+    let mut result: [i64] = []
+    for i in start..end {
+        result.push(i)
+    }
+    return result
+}
+
+fn sum(arr: [i64]) -> i64 {
+    let mut total: i64 = 0
+    for n in arr {
+        total += n
+    }
+    return total
+}
+
+fn sum_f64(arr: [f64]) -> f64 {
+    let mut total: f64 = 0.0
+    for n in arr {
+        total += n
+    }
+    return total
+}
+
+// ============================================================
+// I/O utilities
+// ============================================================
+
+fn file_exists(path: str) -> bool {
+    // Try to read — returns empty on failure
+    // TODO: proper implementation
+    return true
+}
+
+fn env_get(name: str) -> str {
+    // Will be implemented as builtin
+    return ""
+}

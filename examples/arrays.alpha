@@ -1,0 +1,47 @@
+// Dynamic arrays — built-in, type-safe, no boilerplate
+
+fn main() {
+    // Create and populate
+    let mut nums: [i64] = []
+    nums.push(10)
+    nums.push(20)
+    nums.push(30)
+    println(format("length: {}", nums.len))
+    println(format("first: {}", nums[0]))
+    println(format("last: {}", nums[nums.len - 1]))
+
+    // Array literal
+    let names = ["Alice", "Bob", "Charlie"]
+    println(format("{} people", names.len))
+    println(names[1])
+
+    // Modify
+    nums[0] = 99
+    println(format("modified first: {}", nums[0]))
+
+    // Pop
+    let last = nums.pop()
+    println(format("popped: {}, new length: {}", last, nums.len))
+
+    // Build up in a loop
+    let mut squares: [i64] = []
+    let mut i: i64 = 0
+    while i < 10 {
+        squares.push(i * i)
+        i += 1
+    }
+
+    // Print all
+    i = 0
+    while i < squares.len {
+        print(format("{} ", squares[i]))
+        i += 1
+    }
+    println("")
+
+    // Float arrays
+    let mut coords: [f64] = []
+    coords.push(3.14)
+    coords.push(2.71)
+    println(format("pi: {}, e: {}", coords[0], coords[1]))
+}

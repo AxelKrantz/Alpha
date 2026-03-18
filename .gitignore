@@ -1,0 +1,10 @@
+# Compiled binaries
+bootstrap/alphac
+*.o
+*.out
+
+# Temp files
+/tmp/alpha_*
+
+# OS files
+.DS_Store

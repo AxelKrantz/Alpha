@@ -1,0 +1,1623 @@
+// Alpha compiler written in Alpha (Stage 1)
+// Single-pass transpiler: Alpha -> C
+// Reads .alpha source, outputs C, invokes system C compiler
+
+// ============================================================
+// Global state
+// ============================================================
+
+let mut fwd_decls: i64 = 0
+let mut source: str = ""
+let mut src_len: i64 = 0
+let mut pos: i64 = 0
+let mut line: i64 = 1
+let mut col: i64 = 1
+let mut filename: str = ""
+
+// Current and previous token
+let mut tok_type: i64 = 0
+let mut tok_value: str = ""
+let mut tok_line: i64 = 0
+let mut tok_col: i64 = 0
+let mut tok_int: i64 = 0
+
+let mut prev_type: i64 = 0
+let mut prev_value: str = ""
+let mut prev_line: i64 = 0
+let mut prev_col: i64 = 0
+let mut prev_int: i64 = 0
+
+// Output buffer
+let mut out: i64 = 0
+let mut indent: i64 = 0
+
+// Paren depth for newline suppression
+let mut paren_depth: i64 = 0
+
+// ============================================================
+// Token types
+// ============================================================
+
+fn T_EOF() -> i64 { return 0 }
+fn T_IDENT() -> i64 { return 1 }
+fn T_INT() -> i64 { return 2 }
+fn T_FLOAT() -> i64 { return 3 }
+fn T_STRING() -> i64 { return 4 }
+fn T_NEWLINE() -> i64 { return 5 }
+
+fn T_FN() -> i64 { return 10 }
+fn T_LET() -> i64 { return 11 }
+fn T_MUT() -> i64 { return 12 }
+fn T_RETURN() -> i64 { return 13 }
+fn T_IF() -> i64 { return 14 }
+fn T_ELSE() -> i64 { return 15 }
+fn T_WHILE() -> i64 { return 16 }
+fn T_FOR() -> i64 { return 17 }
+fn T_IN() -> i64 { return 18 }
+fn T_STRUCT() -> i64 { return 19 }
+fn T_IMPL() -> i64 { return 20 }
+fn T_TRUE() -> i64 { return 21 }
+fn T_FALSE() -> i64 { return 22 }
+fn T_AND() -> i64 { return 23 }
+fn T_OR() -> i64 { return 24 }
+fn T_NOT() -> i64 { return 25 }
+fn T_BREAK() -> i64 { return 26 }
+fn T_CONTINUE() -> i64 { return 27 }
+fn T_MATCH() -> i64 { return 28 }
+fn T_ENUM() -> i64 { return 29 }
+fn T_PUB() -> i64 { return 30 }
+fn T_NONE() -> i64 { return 31 }
+fn T_SELF() -> i64 { return 32 }
+
+fn T_PLUS() -> i64 { return 40 }
+fn T_MINUS() -> i64 { return 41 }
+fn T_STAR() -> i64 { return 42 }
+fn T_SLASH() -> i64 { return 43 }
+fn T_PERCENT() -> i64 { return 44 }
+fn T_ASSIGN() -> i64 { return 45 }
+fn T_EQ() -> i64 { return 46 }
+fn T_NEQ() -> i64 { return 47 }
+fn T_LT() -> i64 { return 48 }
+fn T_GT() -> i64 { return 49 }
+fn T_LEQ() -> i64 { return 50 }
+fn T_GEQ() -> i64 { return 51 }
+fn T_AMP() -> i64 { return 52 }
+fn T_ARROW() -> i64 { return 53 }
+fn T_FAT_ARROW() -> i64 { return 54 }
+fn T_DOT() -> i64 { return 55 }
+fn T_COMMA() -> i64 { return 56 }
+fn T_COLON() -> i64 { return 57 }
+fn T_LPAREN() -> i64 { return 58 }
+fn T_RPAREN() -> i64 { return 59 }
+fn T_LBRACE() -> i64 { return 60 }
+fn T_RBRACE() -> i64 { return 61 }
+fn T_LBRACKET() -> i64 { return 62 }
+fn T_RBRACKET() -> i64 { return 63 }
+fn T_BANG() -> i64 { return 64 }
+fn T_PLUS_ASSIGN() -> i64 { return 65 }
+fn T_MINUS_ASSIGN() -> i64 { return 66 }
+fn T_STAR_ASSIGN() -> i64 { return 67 }
+fn T_SLASH_ASSIGN() -> i64 { return 68 }
+fn T_COLONCOLON() -> i64 { return 69 }
+fn T_DOTDOT() -> i64 { return 70 }
+
+// ============================================================
+// Error reporting
+// ============================================================
+
+fn error(msg: str) {
+    eprintln(filename + ":" + i64_to_str(tok_line) + ":" + i64_to_str(tok_col) + ": error: " + msg)
+    exit(1)
+}
+
+fn error_expected(expected: str) {
+    error("expected " + expected + ", got '" + tok_value + "'")
+}
+
+// ============================================================
+// Output helpers
+// ============================================================
+
+fn emit(s: str) {
+    sb_append(out, s)
+}
+
+fn emit_line(s: str) {
+    let mut i: i64 = 0
+    while i < indent {
+        sb_append(out, "    ")
+        i += 1
+    }
+    sb_append(out, s)
+    sb_append(out, "\n")
+}
+
+fn emit_indent() {
+    let mut i: i64 = 0
+    while i < indent {
+        sb_append(out, "    ")
+        i += 1
+    }
+}
+
+// ============================================================
+// Lexer
+// ============================================================
+
+fn peek_char() -> i64 {
+    if pos >= src_len {
+        return 0
+    }
+    return str_char_at(source, pos)
+}
+
+fn peek_next_char() -> i64 {
+    if pos + 1 >= src_len {
+        return 0
+    }
+    return str_char_at(source, pos + 1)
+}
+
+fn advance_char() -> i64 {
+    let c = str_char_at(source, pos)
+    pos += 1
+    col += 1
+    return c
+}
+
+fn is_alpha(c: i64) -> bool {
+    return (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95
+}
+
+fn is_digit(c: i64) -> bool {
+    return c >= 48 and c <= 57
+}
+
+fn is_alnum(c: i64) -> bool {
+    return is_alpha(c) or is_digit(c)
+}
+
+fn check_keyword(s: str) -> i64 {
+    if s == "fn" { return T_FN() }
+    if s == "let" { return T_LET() }
+    if s == "mut" { return T_MUT() }
+    if s == "return" { return T_RETURN() }
+    if s == "if" { return T_IF() }
+    if s == "else" { return T_ELSE() }
+    if s == "while" { return T_WHILE() }
+    if s == "for" { return T_FOR() }
+    if s == "in" { return T_IN() }
+    if s == "struct" { return T_STRUCT() }
+    if s == "impl" { return T_IMPL() }
+    if s == "true" { return T_TRUE() }
+    if s == "false" { return T_FALSE() }
+    if s == "and" { return T_AND() }
+    if s == "or" { return T_OR() }
+    if s == "not" { return T_NOT() }
+    if s == "break" { return T_BREAK() }
+    if s == "continue" { return T_CONTINUE() }
+    if s == "match" { return T_MATCH() }
+    if s == "enum" { return T_ENUM() }
+    if s == "pub" { return T_PUB() }
+    if s == "None" { return T_NONE() }
+    if s == "self" { return T_SELF() }
+    return T_IDENT()
+}
+
+fn skip_whitespace() {
+    while pos < src_len {
+        let c = peek_char()
+        if c == 32 or c == 9 or c == 13 {
+            advance_char()
+        } else if c == 47 and peek_next_char() == 47 {
+            // Line comment
+            while pos < src_len and peek_char() != 10 {
+                advance_char()
+            }
+        } else {
+            return
+        }
+    }
+}
+
+fn next_token() {
+    skip_whitespace()
+
+    prev_type = tok_type
+    prev_value = tok_value
+    prev_line = tok_line
+    prev_col = tok_col
+    prev_int = tok_int
+
+    if pos >= src_len {
+        tok_type = T_EOF()
+        tok_value = "EOF"
+        tok_line = line
+        tok_col = col
+        return
+    }
+
+    tok_line = line
+    tok_col = col
+    let c = advance_char()
+
+    // Newlines
+    if c == 10 {
+        line += 1
+        col = 1
+        // Skip consecutive whitespace/newlines
+        while pos < src_len {
+            let nc = peek_char()
+            if nc == 10 {
+                advance_char()
+                line += 1
+                col = 1
+            } else if nc == 32 or nc == 9 or nc == 13 {
+                advance_char()
+            } else {
+                break
+            }
+        }
+        if paren_depth > 0 {
+            next_token()
+            return
+        }
+        // Line continuation: suppress newlines after binary operators
+        if prev_type == T_PLUS() or prev_type == T_MINUS() or
+           prev_type == T_STAR() or prev_type == T_SLASH() or
+           prev_type == T_PERCENT() or prev_type == T_ASSIGN() or
+           prev_type == T_EQ() or prev_type == T_NEQ() or
+           prev_type == T_LT() or prev_type == T_GT() or
+           prev_type == T_LEQ() or prev_type == T_GEQ() or
+           prev_type == T_AND() or prev_type == T_OR() or
+           prev_type == T_COMMA() or prev_type == T_DOT() or
+           prev_type == T_AMP() or prev_type == T_ARROW() or
+           prev_type == T_FAT_ARROW() or prev_type == T_COLON() or
+           prev_type == T_PLUS_ASSIGN() or prev_type == T_MINUS_ASSIGN() or
+           prev_type == T_STAR_ASSIGN() or prev_type == T_SLASH_ASSIGN() {
+            next_token()
+            return
+        }
+        tok_type = T_NEWLINE()
+        tok_value = "\\n"
+        return
+    }
+
+    // Identifiers and keywords
+    if is_alpha(c) {
+        let start = pos - 1
+        while pos < src_len and is_alnum(peek_char()) {
+            advance_char()
+        }
+        tok_value = str_substr(source, start, pos - start)
+        tok_type = check_keyword(tok_value)
+        return
+    }
+
+    // Numbers
+    if is_digit(c) {
+        let start = pos - 1
+        while pos < src_len and (is_digit(peek_char()) or peek_char() == 95) {
+            advance_char()
+        }
+        // Check for float
+        if peek_char() == 46 and is_digit(peek_next_char()) {
+            advance_char()
+            while pos < src_len and is_digit(peek_char()) {
+                advance_char()
+            }
+            tok_type = T_FLOAT()
+            tok_value = str_substr(source, start, pos - start)
+            return
+        }
+        tok_type = T_INT()
+        tok_value = str_substr(source, start, pos - start)
+        tok_int = str_to_i64(tok_value)
+        return
+    }
+
+    // Strings
+    if c == 34 {
+        let start = pos
+        while pos < src_len and peek_char() != 34 {
+            if peek_char() == 92 {
+                advance_char()
+            }
+            advance_char()
+        }
+        tok_value = str_substr(source, start, pos - start)
+        if pos < src_len {
+            advance_char()
+        }
+        tok_type = T_STRING()
+        return
+    }
+
+    // Two-character operators
+    let nc = peek_char()
+    if c == 43 and nc == 61 { advance_char()
+        tok_type = T_PLUS_ASSIGN()
+        tok_value = "+="
+        return }
+    if c == 45 and nc == 61 { advance_char()
+        tok_type = T_MINUS_ASSIGN()
+        tok_value = "-="
+        return }
+    if c == 45 and nc == 62 { advance_char()
+        tok_type = T_ARROW()
+        tok_value = "->"
+        return }
+    if c == 42 and nc == 61 { advance_char()
+        tok_type = T_STAR_ASSIGN()
+        tok_value = "*="
+        return }
+    if c == 47 and nc == 61 { advance_char()
+        tok_type = T_SLASH_ASSIGN()
+        tok_value = "/="
+        return }
+    if c == 61 and nc == 61 { advance_char()
+        tok_type = T_EQ()
+        tok_value = "=="
+        return }
+    if c == 61 and nc == 62 { advance_char()
+        tok_type = T_FAT_ARROW()
+        tok_value = "=>"
+        return }
+    if c == 33 and nc == 61 { advance_char()
+        tok_type = T_NEQ()
+        tok_value = "!="
+        return }
+    if c == 60 and nc == 61 { advance_char()
+        tok_type = T_LEQ()
+        tok_value = "<="
+        return }
+    if c == 62 and nc == 61 { advance_char()
+        tok_type = T_GEQ()
+        tok_value = ">="
+        return }
+    if c == 58 and nc == 58 { advance_char()
+        tok_type = T_COLONCOLON()
+        tok_value = "::"
+        return }
+    if c == 46 and nc == 46 { advance_char()
+        tok_type = T_DOTDOT()
+        tok_value = ".."
+        return }
+
+    // Single character tokens
+    if c == 43 { tok_type = T_PLUS()
+        tok_value = "+"
+        return }
+    if c == 45 { tok_type = T_MINUS()
+        tok_value = "-"
+        return }
+    if c == 42 { tok_type = T_STAR()
+        tok_value = "*"
+        return }
+    if c == 47 { tok_type = T_SLASH()
+        tok_value = "/"
+        return }
+    if c == 37 { tok_type = T_PERCENT()
+        tok_value = "%"
+        return }
+    if c == 61 { tok_type = T_ASSIGN()
+        tok_value = "="
+        return }
+    if c == 60 { tok_type = T_LT()
+        tok_value = "<"
+        return }
+    if c == 62 { tok_type = T_GT()
+        tok_value = ">"
+        return }
+    if c == 38 { tok_type = T_AMP()
+        tok_value = "&"
+        return }
+    if c == 33 { tok_type = T_BANG()
+        tok_value = "!"
+        return }
+    if c == 46 { tok_type = T_DOT()
+        tok_value = "."
+        return }
+    if c == 44 { tok_type = T_COMMA()
+        tok_value = ","
+        return }
+    if c == 58 { tok_type = T_COLON()
+        tok_value = ":"
+        return }
+    if c == 40 { tok_type = T_LPAREN()
+        tok_value = "("
+        paren_depth += 1
+        return }
+    if c == 41 { tok_type = T_RPAREN()
+        tok_value = ")"
+        paren_depth -= 1
+        return }
+    if c == 123 { tok_type = T_LBRACE()
+        tok_value = "{"
+        return }
+    if c == 125 { tok_type = T_RBRACE()
+        tok_value = "}"
+        return }
+    if c == 91 { tok_type = T_LBRACKET()
+        tok_value = "["
+        paren_depth += 1
+        return }
+    if c == 93 { tok_type = T_RBRACKET()
+        tok_value = "]"
+        paren_depth -= 1
+        return }
+
+    error("unexpected character: " + char_to_str(c))
+}
+
+// ============================================================
+// Parser helpers
+// ============================================================
+
+fn check(t: i64) -> bool {
+    return tok_type == t
+}
+
+fn match_tok(t: i64) -> bool {
+    if tok_type == t {
+        next_token()
+        return true
+    }
+    return false
+}
+
+fn expect(t: i64) {
+    if tok_type != t {
+        error_expected("token type " + i64_to_str(t))
+    }
+    next_token()
+}
+
+fn skip_newlines() {
+    while tok_type == T_NEWLINE() {
+        next_token()
+    }
+}
+
+fn expect_terminator() {
+    if tok_type == T_NEWLINE() {
+        next_token()
+        skip_newlines()
+        return
+    }
+    if tok_type == T_EOF() or tok_type == T_RBRACE() {
+        return
+    }
+    error("expected newline or end of block")
+}
+
+// ============================================================
+// Type mapping
+// ============================================================
+
+fn map_type_name(name: str) -> str {
+    if name == "i8" { return "int8_t" }
+    if name == "i16" { return "int16_t" }
+    if name == "i32" { return "int32_t" }
+    if name == "i64" { return "int64_t" }
+    if name == "u8" { return "uint8_t" }
+    if name == "u16" { return "uint16_t" }
+    if name == "u32" { return "uint32_t" }
+    if name == "u64" { return "uint64_t" }
+    if name == "f32" { return "float" }
+    if name == "f64" { return "double" }
+    if name == "bool" { return "bool" }
+    if name == "str" { return "const char*" }
+    if name == "void" { return "void" }
+    return name
+}
+
+fn parse_type_str() -> str {
+    if match_tok(T_AMP()) {
+        if match_tok(T_MUT()) {
+            let inner = parse_type_str()
+            return inner + "*"
+        }
+        let inner = parse_type_str()
+        return "const " + inner + "*"
+    }
+    if match_tok(T_LBRACKET()) {
+        let elem = parse_type_str()
+        expect(T_RBRACKET())
+        return elem + "*"
+    }
+    expect(T_IDENT())
+    let name = prev_value
+    // Handle generic types like Option<T>
+    if check(T_LT()) {
+        next_token()
+        parse_type_str()
+        while match_tok(T_COMMA()) {
+            parse_type_str()
+        }
+        expect(T_GT())
+    }
+    return map_type_name(name)
+}
+
+// ============================================================
+// Expression codegen (recursive descent, emits C directly)
+// ============================================================
+
+fn is_builtin(name: str) -> bool {
+    return name == "print" or name == "println" or name == "len" or
+           name == "exit" or name == "assert" or name == "eprintln" or
+           name == "str_eq" or name == "str_concat" or name == "str_substr" or
+           name == "str_char_at" or name == "str_contains" or name == "str_starts_with" or
+           name == "char_to_str" or name == "i64_to_str" or name == "str_to_i64" or
+           name == "file_read" or name == "file_write" or name == "sqrt" or
+           name == "args_count" or name == "args_get" or name == "run_command" or
+           name == "sb_new" or name == "sb_append" or name == "sb_append_char" or
+           name == "sb_to_str" or name == "alloc"
+}
+
+fn emit_builtin_call(name: str) {
+    if name == "print" or name == "println" {
+        let nl = name == "println"
+        if check(T_RPAREN()) {
+            if nl { emit("printf(\"\\n\")") }
+            return
+        }
+        // Simple approach: use alpha_print for all args
+        emit("alpha_print(")
+        emit_expression()
+        if nl { emit(", 1)") } else { emit(", 0)") }
+        return
+    }
+    if name == "eprintln" {
+        emit("fprintf(stderr, \"%s\\n\", ")
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "len" {
+        emit("(int64_t)strlen(")
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "exit" {
+        emit("exit(")
+        if not check(T_RPAREN()) { emit_expression() } else { emit("0") }
+        emit(")")
+        return
+    }
+    if name == "assert" {
+        emit("assert(")
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "str_eq" {
+        emit("(strcmp(")
+        emit_expression()
+        emit(", ")
+        expect(T_COMMA())
+        emit_expression()
+        emit(") == 0)")
+        return
+    }
+    if name == "str_concat" {
+        emit("alpha_str_concat(")
+        emit_expression()
+        emit(", ")
+        expect(T_COMMA())
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "str_substr" {
+        emit("alpha_str_substr(")
+        emit_expression()
+        emit(", ")
+        expect(T_COMMA())
+        emit_expression()
+        emit(", ")
+        expect(T_COMMA())
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "str_char_at" {
+        emit("(int64_t)((unsigned char)(")
+        emit_expression()
+        emit(")[")
+        expect(T_COMMA())
+        emit_expression()
+        emit("])")
+        return
+    }
+    if name == "str_contains" {
+        emit("(strstr(")
+        emit_expression()
+        emit(", ")
+        expect(T_COMMA())
+        emit_expression()
+        emit(") != NULL)")
+        return
+    }
+    if name == "str_starts_with" {
+        // Need to evaluate both args — use a helper approach
+        emit("alpha_str_starts_with(")
+        emit_expression()
+        emit(", ")
+        expect(T_COMMA())
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "char_to_str" {
+        emit("alpha_char_to_str(")
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "i64_to_str" {
+        emit("alpha_i64_to_str(")
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "str_to_i64" {
+        emit("strtoll(")
+        emit_expression()
+        emit(", NULL, 10)")
+        return
+    }
+    if name == "file_read" {
+        emit("alpha_file_read(")
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "file_write" {
+        emit("alpha_file_write(")
+        emit_expression()
+        emit(", ")
+        expect(T_COMMA())
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "sqrt" {
+        emit("sqrt(")
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "args_count" {
+        emit("args_count()")
+        return
+    }
+    if name == "args_get" {
+        emit("args_get(")
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "run_command" {
+        emit("run_command(")
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "sb_new" {
+        emit("sb_new()")
+        return
+    }
+    if name == "sb_append" {
+        emit("sb_append(")
+        emit_expression()
+        emit(", ")
+        expect(T_COMMA())
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "sb_append_char" {
+        emit("sb_append_char(")
+        emit_expression()
+        emit(", (char)")
+        expect(T_COMMA())
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "sb_to_str" {
+        emit("sb_to_str(")
+        emit_expression()
+        emit(")")
+        return
+    }
+    if name == "alloc" {
+        emit("calloc(1, ")
+        emit_expression()
+        emit(")")
+        return
+    }
+    // Fallback: emit as normal function call
+    emit(name + "(")
+    if not check(T_RPAREN()) {
+        emit_expression()
+        while match_tok(T_COMMA()) {
+            emit(", ")
+            emit_expression()
+        }
+    }
+    emit(")")
+}
+
+fn emit_primary() {
+    if match_tok(T_INT()) {
+        emit(prev_value + "LL")
+        return
+    }
+    if match_tok(T_FLOAT()) {
+        emit(prev_value)
+        return
+    }
+    if match_tok(T_STRING()) {
+        emit("\"" + prev_value + "\"")
+        return
+    }
+    if match_tok(T_TRUE()) {
+        emit("true")
+        return
+    }
+    if match_tok(T_FALSE()) {
+        emit("false")
+        return
+    }
+    if match_tok(T_NONE()) {
+        emit("NULL")
+        return
+    }
+    if match_tok(T_SELF()) {
+        emit("self")
+        return
+    }
+    if match_tok(T_IDENT()) {
+        let name = prev_value
+
+        // Check for struct literal: Name { ... }
+        if check(T_LBRACE()) and len(name) > 0 and str_char_at(name, 0) >= 65 and str_char_at(name, 0) <= 90 {
+            next_token()
+            skip_newlines()
+            emit("(" + name + "){")
+            let mut first: bool = true
+            while not check(T_RBRACE()) and not check(T_EOF()) {
+                if not first { emit(", ") }
+                first = false
+                expect(T_IDENT())
+                emit("." + prev_value + " = ")
+                expect(T_COLON())
+                emit_expression()
+                match_tok(T_COMMA())
+                skip_newlines()
+            }
+            expect(T_RBRACE())
+            emit("}")
+            return
+        }
+
+        // Function call
+        if check(T_LPAREN()) {
+            next_token()
+            if is_builtin(name) {
+                emit_builtin_call(name)
+            } else {
+                emit(name + "(")
+                if not check(T_RPAREN()) {
+                    emit_expression()
+                    while match_tok(T_COMMA()) {
+                        emit(", ")
+                        emit_expression()
+                    }
+                }
+                emit(")")
+            }
+            expect(T_RPAREN())
+            return
+        }
+
+        emit(name)
+        return
+    }
+    if match_tok(T_LBRACKET()) {
+        emit("{")
+        if not check(T_RBRACKET()) {
+            emit_expression()
+            while match_tok(T_COMMA()) {
+                skip_newlines()
+                emit(", ")
+                if check(T_RBRACKET()) { break }
+                emit_expression()
+            }
+        }
+        expect(T_RBRACKET())
+        emit("}")
+        return
+    }
+    if match_tok(T_LPAREN()) {
+        emit("(")
+        emit_expression()
+        expect(T_RPAREN())
+        emit(")")
+        return
+    }
+    error("expected expression, got '" + tok_value + "'")
+}
+
+fn emit_postfix() {
+    emit_primary()
+    while true {
+        if match_tok(T_DOT()) {
+            expect(T_IDENT())
+            let field = prev_value
+            if check(T_LPAREN()) {
+                // Method call — need type info for dispatch
+                // For now emit as name_method(&obj, args)
+                // TODO: proper method dispatch
+                next_token()
+                emit("." + field + "(")
+                if not check(T_RPAREN()) {
+                    emit_expression()
+                    while match_tok(T_COMMA()) {
+                        emit(", ")
+                        emit_expression()
+                    }
+                }
+                expect(T_RPAREN())
+                emit(")")
+            } else {
+                emit("." + field)
+            }
+        } else if match_tok(T_LBRACKET()) {
+            emit("[")
+            emit_expression()
+            expect(T_RBRACKET())
+            emit("]")
+        } else {
+            break
+        }
+    }
+}
+
+fn emit_unary() {
+    if match_tok(T_MINUS()) {
+        emit("(-")
+        emit_unary()
+        emit(")")
+        return
+    }
+    if match_tok(T_NOT()) or match_tok(T_BANG()) {
+        emit("(!")
+        emit_unary()
+        emit(")")
+        return
+    }
+    if match_tok(T_AMP()) {
+        emit("&")
+        if match_tok(T_MUT()) { }
+        emit_unary()
+        return
+    }
+    if match_tok(T_STAR()) {
+        emit("(*")
+        emit_unary()
+        emit(")")
+        return
+    }
+    emit_postfix()
+}
+
+fn emit_multiplicative() {
+    emit_unary()
+    while check(T_STAR()) or check(T_SLASH()) or check(T_PERCENT()) {
+        let op = tok_value
+        next_token()
+        emit(" " + op + " ")
+        emit_unary()
+    }
+}
+
+fn emit_additive() {
+    // To handle string + string → alpha_add(), we need to know if + is coming
+    // before emitting the left side. We buffer the left operand.
+    let saved = out
+    let buf = sb_new()
+    out = buf
+    emit_multiplicative()
+    out = saved
+
+    let mut left_str = sb_to_str(buf)
+
+    while check(T_PLUS()) or check(T_MINUS()) {
+        if check(T_PLUS()) {
+            next_token()
+            // Buffer right operand too
+            let rbuf = sb_new()
+            out = rbuf
+            emit_multiplicative()
+            out = saved
+            let right_str = sb_to_str(rbuf)
+            left_str = "alpha_add(" + left_str + ", " + right_str + ")"
+        } else {
+            next_token()
+            let rbuf = sb_new()
+            out = rbuf
+            emit_multiplicative()
+            out = saved
+            let right_str = sb_to_str(rbuf)
+            left_str = "(" + left_str + " - " + right_str + ")"
+        }
+    }
+    emit(left_str)
+}
+
+fn emit_comparison() {
+    let saved = out
+    let lbuf = sb_new()
+    out = lbuf
+    emit_additive()
+    out = saved
+    let left_str = sb_to_str(lbuf)
+
+    if check(T_EQ()) or check(T_NEQ()) {
+        let is_eq = check(T_EQ())
+        next_token()
+        let rbuf = sb_new()
+        out = rbuf
+        emit_additive()
+        out = saved
+        let right_str = sb_to_str(rbuf)
+        if is_eq {
+            emit("alpha_eq(" + left_str + ", " + right_str + ")")
+        } else {
+            emit("alpha_neq(" + left_str + ", " + right_str + ")")
+        }
+    } else if check(T_LT()) or check(T_GT()) or check(T_LEQ()) or check(T_GEQ()) {
+        let op = tok_value
+        next_token()
+        emit(left_str + " " + op + " ")
+        emit_additive()
+    } else {
+        emit(left_str)
+    }
+}
+
+fn emit_and_expr() {
+    emit_comparison()
+    while match_tok(T_AND()) {
+        emit(" && ")
+        emit_comparison()
+    }
+}
+
+fn emit_or_expr() {
+    emit_and_expr()
+    while match_tok(T_OR()) {
+        emit(" || ")
+        emit_and_expr()
+    }
+}
+
+fn emit_expression() {
+    emit_or_expr()
+}
+
+// ============================================================
+// Statement codegen
+// ============================================================
+
+fn emit_block() {
+    expect(T_LBRACE())
+    skip_newlines()
+    while not check(T_RBRACE()) and not check(T_EOF()) {
+        emit_statement()
+        skip_newlines()
+    }
+    expect(T_RBRACE())
+}
+
+fn emit_let_stmt() {
+    let is_mut = match_tok(T_MUT())
+    expect(T_IDENT())
+    let name = prev_value
+
+    let mut type_str: str = ""
+    if match_tok(T_COLON()) {
+        type_str = parse_type_str()
+    }
+
+    if match_tok(T_ASSIGN()) {
+        if type_str == "" {
+            emit_indent()
+            emit("__auto_type " + name + " = ")
+            emit_expression()
+            emit(";\n")
+        } else {
+            emit_indent()
+            emit(type_str + " " + name + " = ")
+            emit_expression()
+            emit(";\n")
+        }
+    } else {
+        if type_str == "" { type_str = "int64_t" }
+        emit_line(type_str + " " + name + " = 0;")
+    }
+    expect_terminator()
+}
+
+fn emit_return_stmt() {
+    emit_indent()
+    if check(T_NEWLINE()) or check(T_RBRACE()) or check(T_EOF()) {
+        emit("return;\n")
+    } else {
+        emit("return ")
+        emit_expression()
+        emit(";\n")
+    }
+    expect_terminator()
+}
+
+fn emit_if_stmt() {
+    emit("if (")
+    emit_expression()
+    emit(") {\n")
+    indent += 1
+    expect(T_LBRACE())
+    skip_newlines()
+    while not check(T_RBRACE()) and not check(T_EOF()) {
+        emit_statement()
+        skip_newlines()
+    }
+    expect(T_RBRACE())
+    indent -= 1
+    emit_indent()
+    emit("}")
+    skip_newlines()
+    if match_tok(T_ELSE()) {
+        if check(T_IF()) {
+            next_token()
+            emit(" else ")
+            emit_if_stmt()
+            return
+        }
+        emit(" else {\n")
+        indent += 1
+        expect(T_LBRACE())
+        skip_newlines()
+        while not check(T_RBRACE()) and not check(T_EOF()) {
+            emit_statement()
+            skip_newlines()
+        }
+        expect(T_RBRACE())
+        indent -= 1
+        emit_indent()
+        emit("}")
+    }
+    emit("\n")
+}
+
+fn emit_while_stmt() {
+    emit_indent()
+    emit("while (")
+    emit_expression()
+    emit(") {\n")
+    indent += 1
+    emit_block()
+    indent -= 1
+    emit_line("}")
+}
+
+fn emit_match_stmt() {
+    emit_indent()
+    emit("{\n")
+    indent += 1
+    emit_indent()
+    emit("__auto_type __match_val = ")
+    emit_expression()
+    emit(";\n")
+
+    expect(T_LBRACE())
+    skip_newlines()
+
+    let mut first: bool = true
+    while not check(T_RBRACE()) and not check(T_EOF()) {
+        // Check for wildcard
+        let is_wildcard = check(T_IDENT()) and tok_value == "_"
+        if is_wildcard {
+            next_token()
+            emit_indent()
+            if not first { emit("else ") }
+            emit("{\n")
+        } else {
+            emit_indent()
+            if first {
+                emit("if (__match_val == ")
+            } else {
+                emit("else if (__match_val == ")
+            }
+            emit_expression()
+            emit(") {\n")
+        }
+        first = false
+
+        expect(T_FAT_ARROW())
+
+        indent += 1
+        if check(T_LBRACE()) {
+            emit_block()
+        } else {
+            emit_indent()
+            emit_expression()
+            emit(";\n")
+        }
+        indent -= 1
+        emit_line("}")
+
+        match_tok(T_COMMA())
+        skip_newlines()
+    }
+    expect(T_RBRACE())
+    indent -= 1
+    emit_line("}")
+}
+
+fn emit_statement() {
+    skip_newlines()
+
+    if match_tok(T_LET()) {
+        emit_let_stmt()
+        return
+    }
+    if match_tok(T_RETURN()) {
+        emit_return_stmt()
+        return
+    }
+    if match_tok(T_IF()) {
+        emit_indent()
+        emit_if_stmt()
+        return
+    }
+    if match_tok(T_WHILE()) {
+        emit_while_stmt()
+        return
+    }
+    if match_tok(T_MATCH()) {
+        emit_match_stmt()
+        return
+    }
+    if match_tok(T_BREAK()) {
+        emit_line("break;")
+        expect_terminator()
+        return
+    }
+    if match_tok(T_CONTINUE()) {
+        emit_line("continue;")
+        expect_terminator()
+        return
+    }
+
+    // Expression statement or assignment
+    emit_indent()
+    emit_expression()
+
+    // Check for assignment
+    if check(T_ASSIGN()) or check(T_PLUS_ASSIGN()) or check(T_MINUS_ASSIGN()) or check(T_STAR_ASSIGN()) or check(T_SLASH_ASSIGN()) {
+        let op = tok_value
+        next_token()
+        emit(" " + op + " ")
+        emit_expression()
+    }
+    emit(";\n")
+    expect_terminator()
+}
+
+// ============================================================
+// Declaration codegen
+// ============================================================
+
+fn emit_fn_params() {
+    expect(T_LPAREN())
+
+    let mut first: bool = true
+
+    // Handle self parameter
+    if check(T_SELF()) or check(T_AMP()) {
+        if match_tok(T_AMP()) {
+            match_tok(T_MUT())
+            expect(T_SELF())
+        } else {
+            expect(T_SELF())
+        }
+        // self is handled by the impl block context
+        emit("void* self")
+        first = false
+        if not check(T_RPAREN()) {
+            expect(T_COMMA())
+        }
+    }
+
+    while not check(T_RPAREN()) and not check(T_EOF()) {
+        if not first { emit(", ") }
+        first = false
+
+        expect(T_IDENT())
+        let param_name = prev_value
+        expect(T_COLON())
+        let param_type = parse_type_str()
+        emit(param_type + " " + param_name)
+
+        if not match_tok(T_COMMA()) { break }
+    }
+    expect(T_RPAREN())
+}
+
+fn emit_fn_decl(is_method: bool, struct_name: str) {
+    expect(T_IDENT())
+    let fn_name = prev_value
+
+    let mut ret_type: str = "void"
+    let mut c_name = fn_name
+
+    if is_method {
+        c_name = struct_name + "_" + fn_name
+    }
+
+    // Special case for main
+    if fn_name == "main" {
+        emit("int main(int argc, char** argv) {\n")
+        emit_line("alpha_argc = argc;")
+        emit_line("alpha_argv = argv;")
+        // Skip params
+        expect(T_LPAREN())
+        expect(T_RPAREN())
+    } else {
+        // Parse params first to build signature
+        // We emit return type after knowing it
+        let mut sig = sb_new()
+
+        // Temporarily capture param output
+        let saved_out = out
+        out = sig
+        emit_fn_params()
+        out = saved_out
+        let params_str = sb_to_str(sig)
+
+        // Check return type
+        if match_tok(T_ARROW()) {
+            ret_type = parse_type_str()
+        }
+
+        let mut full_params = params_str
+        if params_str == "" and not is_method { full_params = "void" }
+
+        // Emit forward declaration
+        sb_append(fwd_decls, ret_type + " " + c_name + "(" + full_params + ");\n")
+
+        emit(ret_type + " " + c_name + "(" + full_params + ") {\n")
+    }
+
+    indent = 1
+    emit_block()
+
+    if fn_name == "main" {
+        emit_line("return 0;")
+    }
+
+    emit("}\n\n")
+    indent = 0
+}
+
+fn emit_struct_decl() {
+    expect(T_IDENT())
+    let name = prev_value
+
+    emit("typedef struct {\n")
+    indent = 1
+
+    expect(T_LBRACE())
+    skip_newlines()
+    while not check(T_RBRACE()) and not check(T_EOF()) {
+        expect(T_IDENT())
+        let field_name = prev_value
+        expect(T_COLON())
+        let field_type = parse_type_str()
+        emit_line(field_type + " " + field_name + ";")
+        match_tok(T_COMMA())
+        skip_newlines()
+    }
+    expect(T_RBRACE())
+
+    indent = 0
+    emit("} " + name + ";\n\n")
+}
+
+fn emit_enum_decl() {
+    expect(T_IDENT())
+    let name = prev_value
+
+    emit("typedef enum {\n")
+    indent = 1
+
+    expect(T_LBRACE())
+    skip_newlines()
+    while not check(T_RBRACE()) and not check(T_EOF()) {
+        expect(T_IDENT())
+        emit_line(name + "_" + prev_value + ",")
+        match_tok(T_COMMA())
+        skip_newlines()
+    }
+    expect(T_RBRACE())
+
+    indent = 0
+    emit("} " + name + ";\n\n")
+}
+
+fn emit_impl_block() {
+    expect(T_IDENT())
+    let struct_name = prev_value
+
+    expect(T_LBRACE())
+    skip_newlines()
+
+    while not check(T_RBRACE()) and not check(T_EOF()) {
+        skip_newlines()
+        match_tok(T_PUB())
+        expect(T_FN())
+        emit_fn_decl(true, struct_name)
+        skip_newlines()
+    }
+    expect(T_RBRACE())
+}
+
+fn emit_global_let() {
+    let is_mut = match_tok(T_MUT())
+    expect(T_IDENT())
+    let name = prev_value
+
+    let mut type_str: str = ""
+    if match_tok(T_COLON()) {
+        type_str = parse_type_str()
+    }
+
+    if match_tok(T_ASSIGN()) {
+        if type_str == "" { type_str = "__auto_type" }
+        emit(type_str + " " + name + " = ")
+        emit_expression()
+        emit(";\n")
+    } else {
+        if type_str == "" { type_str = "int64_t" }
+        emit(type_str + " " + name + " = 0;\n")
+    }
+    expect_terminator()
+}
+
+// ============================================================
+// Top-level compilation
+// ============================================================
+
+fn emit_preamble() {
+    emit_line("/* Generated by Alpha compiler (self-hosted) */")
+    emit_line("#include <stdio.h>")
+    emit_line("#include <stdlib.h>")
+    emit_line("#include <stdint.h>")
+    emit_line("#include <stdbool.h>")
+    emit_line("#include <string.h>")
+    emit_line("#include <assert.h>")
+    emit_line("#include <math.h>")
+    emit_line("")
+
+    // Runtime functions
+    emit_line("static char* alpha_str_concat(const char* a, const char* b) {")
+    emit_line("    size_t la = strlen(a), lb = strlen(b);")
+    emit_line("    char* r = malloc(la + lb + 1);")
+    emit_line("    memcpy(r, a, la); memcpy(r + la, b, lb); r[la + lb] = 0;")
+    emit_line("    return r;")
+    emit_line("}")
+    emit_line("static char* alpha_str_substr(const char* s, int64_t start, int64_t len) {")
+    emit_line("    char* r = malloc(len + 1);")
+    emit_line("    memcpy(r, s + start, len); r[len] = 0;")
+    emit_line("    return r;")
+    emit_line("}")
+    emit_line("static char* alpha_char_to_str(int64_t c) {")
+    emit_line("    char* r = malloc(2); r[0] = (char)c; r[1] = 0; return r;")
+    emit_line("}")
+    emit_line("static char* alpha_i64_to_str(int64_t v) {")
+    emit_line("    char* r = malloc(21); snprintf(r, 21, \"%lld\", (long long)v); return r;")
+    emit_line("}")
+    emit_line("static char* alpha_file_read(const char* path) {")
+    emit_line("    FILE* f = fopen(path, \"rb\");")
+    emit_line("    if (!f) { fprintf(stderr, \"error: cannot open '%s'\\n\", path); exit(1); }")
+    emit_line("    fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);")
+    emit_line("    char* r = malloc(sz + 1); fread(r, 1, sz, f); r[sz] = 0; fclose(f); return r;")
+    emit_line("}")
+    emit_line("static void alpha_file_write(const char* path, const char* data) {")
+    emit_line("    FILE* f = fopen(path, \"wb\");")
+    emit_line("    if (!f) { fprintf(stderr, \"error: cannot write '%s'\\n\", path); exit(1); }")
+    emit_line("    fwrite(data, 1, strlen(data), f); fclose(f);")
+    emit_line("}")
+    emit_line("static bool alpha_str_starts_with(const char* s, const char* prefix) {")
+    emit_line("    return strncmp(s, prefix, strlen(prefix)) == 0;")
+    emit_line("}")
+    emit_line("")
+    emit_line("static int alpha_argc = 0;")
+    emit_line("static char** alpha_argv = NULL;")
+    emit_line("static int64_t args_count(void) { return alpha_argc; }")
+    emit_line("static const char* args_get(int64_t i) { return (i < alpha_argc) ? alpha_argv[i] : \"\"; }")
+    emit_line("static int64_t run_command(const char* cmd) { return system(cmd); }")
+    emit_line("")
+    emit_line("typedef struct { char* data; int64_t len; int64_t cap; } StringBuilder;")
+    emit_line("static StringBuilder* sb_new(void) {")
+    emit_line("    StringBuilder* sb = calloc(1, sizeof(StringBuilder));")
+    emit_line("    sb->cap = 256; sb->data = malloc(sb->cap); sb->data[0] = 0; return sb;")
+    emit_line("}")
+    emit_line("static void sb_append(StringBuilder* sb, const char* s) {")
+    emit_line("    int64_t slen = strlen(s);")
+    emit_line("    while (sb->len + slen + 1 > sb->cap) { sb->cap *= 2; sb->data = realloc(sb->data, sb->cap); }")
+    emit_line("    memcpy(sb->data + sb->len, s, slen); sb->len += slen; sb->data[sb->len] = 0;")
+    emit_line("}")
+    emit_line("static void sb_append_char(StringBuilder* sb, char c) {")
+    emit_line("    if (sb->len + 2 > sb->cap) { sb->cap *= 2; sb->data = realloc(sb->data, sb->cap); }")
+    emit_line("    sb->data[sb->len++] = c; sb->data[sb->len] = 0;")
+    emit_line("}")
+    emit_line("static const char* sb_to_str(StringBuilder* sb) { return sb->data; }")
+    emit_line("")
+    emit_line("static inline void alpha_print_i64(int64_t v, int nl) { printf(nl ? \"%lld\\n\" : \"%lld\", (long long)v); }")
+    emit_line("static inline void alpha_print_f64(double v, int nl) { printf(nl ? \"%g\\n\" : \"%g\", v); }")
+    emit_line("static inline void alpha_print_str(const char* v, int nl) { printf(nl ? \"%s\\n\" : \"%s\", v); }")
+    emit_line("static inline void alpha_print_bool(bool v, int nl) { printf(nl ? \"%s\\n\" : \"%s\", v ? \"true\" : \"false\"); }")
+    emit_line("#define alpha_print(val, nl) _Generic((val), \\")
+    emit_line("    int64_t: alpha_print_i64, \\")
+    emit_line("    int: alpha_print_i64, \\")
+    emit_line("    double: alpha_print_f64, \\")
+    emit_line("    float: alpha_print_f64, \\")
+    emit_line("    char*: alpha_print_str, \\")
+    emit_line("    const char*: alpha_print_str, \\")
+    emit_line("    _Bool: alpha_print_bool, \\")
+    emit_line("    default: alpha_print_i64)((val), (nl))")
+    emit_line("")
+    // alpha_eq/neq: handles both numeric and string equality
+    emit_line("static inline bool alpha_eq_str(const char* a, const char* b) { return strcmp(a, b) == 0; }")
+    emit_line("static inline bool alpha_eq_i64(int64_t a, int64_t b) { return a == b; }")
+    emit_line("static inline bool alpha_eq_f64(double a, double b) { return a == b; }")
+    emit_line("static inline bool alpha_eq_bool(bool a, bool b) { return a == b; }")
+    emit_line("static inline bool alpha_neq_str(const char* a, const char* b) { return strcmp(a, b) != 0; }")
+    emit_line("static inline bool alpha_neq_i64(int64_t a, int64_t b) { return a != b; }")
+    emit_line("static inline bool alpha_neq_f64(double a, double b) { return a != b; }")
+    emit_line("static inline bool alpha_neq_bool(bool a, bool b) { return a != b; }")
+    emit_line("#define alpha_eq(a, b) _Generic((a), \\")
+    emit_line("    char*: alpha_eq_str, const char*: alpha_eq_str, \\")
+    emit_line("    double: alpha_eq_f64, float: alpha_eq_f64, \\")
+    emit_line("    _Bool: alpha_eq_bool, \\")
+    emit_line("    default: alpha_eq_i64)((a), (b))")
+    emit_line("#define alpha_neq(a, b) _Generic((a), \\")
+    emit_line("    char*: alpha_neq_str, const char*: alpha_neq_str, \\")
+    emit_line("    double: alpha_neq_f64, float: alpha_neq_f64, \\")
+    emit_line("    _Bool: alpha_neq_bool, \\")
+    emit_line("    default: alpha_neq_i64)((a), (b))")
+    emit_line("")
+
+    // alpha_add: handles both numeric + and string concatenation via _Generic
+    emit_line("static inline const char* alpha_add_str(const char* a, const char* b) { return alpha_str_concat(a, b); }")
+    emit_line("static inline int64_t alpha_add_i64(int64_t a, int64_t b) { return a + b; }")
+    emit_line("static inline double alpha_add_f64(double a, double b) { return a + b; }")
+    emit_line("#define alpha_add(a, b) _Generic((a), \\")
+    emit_line("    char*: alpha_add_str, \\")
+    emit_line("    const char*: alpha_add_str, \\")
+    emit_line("    double: alpha_add_f64, \\")
+    emit_line("    float: alpha_add_f64, \\")
+    emit_line("    default: alpha_add_i64)((a), (b))")
+    emit_line("")
+}
+
+fn compile(input_path: str, output_path: str) {
+    source = file_read(input_path)
+    src_len = len(source)
+    filename = input_path
+    pos = 0
+    line = 1
+    col = 1
+    paren_depth = 0
+    fwd_decls = sb_new()
+    indent = 0
+
+    // Emit preamble to its own buffer
+    let preamble_buf = sb_new()
+    out = preamble_buf
+    emit_preamble()
+
+    // Start lexing
+    next_token()
+    skip_newlines()
+
+    // Use two output buffers: one for code body, fwd_decls collects prototypes
+    let code_buf = sb_new()
+    out = code_buf
+
+    // Parse declarations
+    while not check(T_EOF()) {
+        skip_newlines()
+        if check(T_EOF()) { break }
+
+        match_tok(T_PUB())
+
+        if match_tok(T_FN()) {
+            emit_fn_decl(false, "")
+        } else if match_tok(T_STRUCT()) {
+            emit_struct_decl()
+        } else if match_tok(T_ENUM()) {
+            emit_enum_decl()
+        } else if match_tok(T_IMPL()) {
+            emit_impl_block()
+        } else if match_tok(T_LET()) {
+            emit_global_let()
+        } else {
+            error("expected declaration, got '" + tok_value + "'")
+        }
+        skip_newlines()
+    }
+
+    // Build final output: preamble + forward declarations + code
+    let final_buf = sb_new()
+    sb_append(final_buf, sb_to_str(preamble_buf))
+    sb_append(final_buf, "\n// Forward declarations\n")
+    sb_append(final_buf, sb_to_str(fwd_decls))
+    sb_append(final_buf, "\n")
+    sb_append(final_buf, sb_to_str(code_buf))
+
+    let c_code = sb_to_str(final_buf)
+
+    // Write to temp file and compile
+    let c_path = "/tmp/alpha_self_" + i64_to_str(42) + ".c"
+    file_write(c_path, c_code)
+
+    let cmd = "cc -O2 -w -o " + output_path + " " + c_path + " -lm"
+    let result = run_command(cmd)
+    if result != 0 {
+        eprintln("C compilation failed")
+        exit(1)
+    }
+
+    println("compiled: " + input_path + " -> " + output_path)
+}
+
+fn main() {
+    if args_count() < 2 {
+        eprintln("Usage: alphac <file.alpha> [-o output]")
+        exit(1)
+    }
+
+    let input_file = args_get(1)
+    let mut output_file: str = ""
+
+    // Parse args
+    if args_count() >= 4 and args_get(2) == "-o" {
+        output_file = args_get(3)
+    } else {
+        // Derive output name from input
+        let mut i: i64 = len(input_file) - 1
+        let mut dot_pos: i64 = -1
+        while i >= 0 {
+            if str_char_at(input_file, i) == 46 {
+                dot_pos = i
+                break
+            }
+            i -= 1
+        }
+        if dot_pos > 0 {
+            output_file = str_substr(input_file, 0, dot_pos)
+        } else {
+            output_file = input_file + ".out"
+        }
+    }
+
+    compile(input_file, output_file)
+}

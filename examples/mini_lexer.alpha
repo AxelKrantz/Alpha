@@ -1,0 +1,164 @@
+// A mini lexer written in Alpha — proof that the language
+// can handle the complexity needed for self-hosting
+
+struct Token {
+    kind: i64
+    value: str
+    line: i64
+    col: i64
+}
+
+// Token kinds
+fn TOK_EOF() -> i64 { return 0 }
+fn TOK_IDENT() -> i64 { return 1 }
+fn TOK_INT() -> i64 { return 2 }
+fn TOK_STRING() -> i64 { return 3 }
+fn TOK_PLUS() -> i64 { return 4 }
+fn TOK_MINUS() -> i64 { return 5 }
+fn TOK_LPAREN() -> i64 { return 6 }
+fn TOK_RPAREN() -> i64 { return 7 }
+fn TOK_ASSIGN() -> i64 { return 8 }
+fn TOK_UNKNOWN() -> i64 { return 99 }
+
+fn is_alpha(c: i64) -> bool {
+    return (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95
+}
+
+fn is_digit(c: i64) -> bool {
+    return c >= 48 and c <= 57
+}
+
+fn is_whitespace(c: i64) -> bool {
+    return c == 32 or c == 9 or c == 10 or c == 13
+}
+
+fn token_kind_name(kind: i64) -> str {
+    match kind {
+        0 => { return "EOF" }
+        1 => { return "IDENT" }
+        2 => { return "INT" }
+        3 => { return "STRING" }
+        4 => { return "PLUS" }
+        5 => { return "MINUS" }
+        6 => { return "LPAREN" }
+        7 => { return "RPAREN" }
+        8 => { return "ASSIGN" }
+        _ => { return "UNKNOWN" }
+    }
+    return "?"
+}
+
+fn lex(source: str) {
+    let slen = len(source)
+    let mut pos: i64 = 0
+    let mut line: i64 = 1
+    let mut col: i64 = 1
+
+    while pos < slen {
+        let c = str_char_at(source, pos)
+
+        // Skip whitespace
+        if is_whitespace(c) {
+            if c == 10 {
+                line += 1
+                col = 1
+            } else {
+                col += 1
+            }
+            pos += 1
+            continue
+        }
+
+        // Identifier
+        if is_alpha(c) {
+            let start = pos
+            while pos < slen and (is_alpha(str_char_at(source, pos)) or is_digit(str_char_at(source, pos))) {
+                pos += 1
+            }
+            let value = str_substr(source, start, pos - start)
+            print(token_kind_name(TOK_IDENT()))
+            print(" '")
+            print(value)
+            print("' at ")
+            print(line)
+            print(":")
+            println(col)
+            col += pos - start
+            continue
+        }
+
+        // Integer
+        if is_digit(c) {
+            let start = pos
+            while pos < slen and is_digit(str_char_at(source, pos)) {
+                pos += 1
+            }
+            let value = str_substr(source, start, pos - start)
+            print(token_kind_name(TOK_INT()))
+            print(" '")
+            print(value)
+            print("' at ")
+            print(line)
+            print(":")
+            println(col)
+            col += pos - start
+            continue
+        }
+
+        // String literal
+        if c == 34 {
+            pos += 1
+            let start = pos
+            while pos < slen and str_char_at(source, pos) != 34 {
+                pos += 1
+            }
+            let value = str_substr(source, start, pos - start)
+            pos += 1
+            print(token_kind_name(TOK_STRING()))
+            print(" '")
+            print(value)
+            print("' at ")
+            print(line)
+            print(":")
+            println(col)
+            col += pos - start + 2
+            continue
+        }
+
+        // Single character tokens
+        let mut kind = TOK_UNKNOWN()
+        match c {
+            43 => { kind = TOK_PLUS() }
+            45 => { kind = TOK_MINUS() }
+            40 => { kind = TOK_LPAREN() }
+            41 => { kind = TOK_RPAREN() }
+            61 => { kind = TOK_ASSIGN() }
+            _ => { kind = TOK_UNKNOWN() }
+        }
+
+        print(token_kind_name(kind))
+        print(" '")
+        print(char_to_str(c))
+        print("' at ")
+        print(line)
+        print(":")
+        println(col)
+
+        pos += 1
+        col += 1
+    }
+
+    print(token_kind_name(TOK_EOF()))
+    print(" at ")
+    print(line)
+    print(":")
+    println(col)
+}
+
+fn main() {
+    let source: str = "let x = 42 + y\nfoo(\"hello\")"
+    println("Lexing:")
+    println(source)
+    println("---")
+    lex(source)
+}

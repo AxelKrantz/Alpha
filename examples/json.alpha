@@ -1,0 +1,491 @@
+// JSON parser written in Alpha
+// Supports: strings, numbers, booleans, null, arrays, objects
+
+// ============================================================
+// JSON value types
+// ============================================================
+
+// Type tags
+fn JSON_NULL() -> i64 { return 0 }
+fn JSON_BOOL() -> i64 { return 1 }
+fn JSON_NUMBER() -> i64 { return 2 }
+fn JSON_STRING() -> i64 { return 3 }
+fn JSON_ARRAY() -> i64 { return 4 }
+fn JSON_OBJECT() -> i64 { return 5 }
+
+// A JSON value is stored as a tagged record.
+// Since we don't have sum types, we use a struct with all fields.
+// Only the field matching `tag` is valid.
+struct JsonValue {
+    tag: i64
+    bool_val: bool
+    num_val: f64
+    str_val: str
+    arr_val: [i64]       // indices into a global value pool
+    obj_keys: [str]      // object keys
+    obj_vals: [i64]      // indices into global value pool
+}
+
+// Global value pool — all JsonValues live here, referenced by index
+let mut pool: [JsonValue] = []
+
+fn json_new_null() -> i64 {
+    let v = JsonValue {
+        tag: JSON_NULL(), bool_val: false, num_val: 0.0, str_val: "",
+        arr_val: [], obj_keys: [], obj_vals: []
+    }
+    pool.push(v)
+    return pool.len - 1
+}
+
+fn json_new_bool(b: bool) -> i64 {
+    let v = JsonValue {
+        tag: JSON_BOOL(), bool_val: b, num_val: 0.0, str_val: "",
+        arr_val: [], obj_keys: [], obj_vals: []
+    }
+    pool.push(v)
+    return pool.len - 1
+}
+
+fn json_new_number(n: f64) -> i64 {
+    let v = JsonValue {
+        tag: JSON_NUMBER(), bool_val: false, num_val: n, str_val: "",
+        arr_val: [], obj_keys: [], obj_vals: []
+    }
+    pool.push(v)
+    return pool.len - 1
+}
+
+fn json_new_string(s: str) -> i64 {
+    let v = JsonValue {
+        tag: JSON_STRING(), bool_val: false, num_val: 0.0, str_val: s,
+        arr_val: [], obj_keys: [], obj_vals: []
+    }
+    pool.push(v)
+    return pool.len - 1
+}
+
+fn json_new_array() -> i64 {
+    let v = JsonValue {
+        tag: JSON_ARRAY(), bool_val: false, num_val: 0.0, str_val: "",
+        arr_val: [], obj_keys: [], obj_vals: []
+    }
+    pool.push(v)
+    return pool.len - 1
+}
+
+fn json_new_object() -> i64 {
+    let v = JsonValue {
+        tag: JSON_OBJECT(), bool_val: false, num_val: 0.0, str_val: "",
+        arr_val: [], obj_keys: [], obj_vals: []
+    }
+    pool.push(v)
+    return pool.len - 1
+}
+
+// ============================================================
+// Parser state
+// ============================================================
+
+let mut input: str = ""
+let mut input_len: i64 = 0
+let mut pos: i64 = 0
+
+fn peek() -> i64 {
+    if pos >= input_len { return 0 }
+    return input.char_at(pos)
+}
+
+fn advance() -> i64 {
+    let c = input.char_at(pos)
+    pos += 1
+    return c
+}
+
+fn skip_whitespace() {
+    while pos < input_len {
+        let c = peek()
+        if c == 32 or c == 9 or c == 10 or c == 13 {
+            pos += 1
+        } else {
+            return
+        }
+    }
+}
+
+fn parse_error(msg: str) -> i64 {
+    eprintln(format("JSON parse error at position {}: {}", pos, msg))
+    exit(1)
+    return -1
+}
+
+// ============================================================
+// Parser
+// ============================================================
+
+fn parse_string() -> str {
+    // Skip opening quote
+    pos += 1
+    let mut result: [str] = []
+
+    while pos < input_len and peek() != 34 {
+        if peek() == 92 {
+            // Escape sequence
+            pos += 1
+            let esc = advance()
+            if esc == 110 { result.push("\n") }
+            else if esc == 116 { result.push("\t") }
+            else if esc == 114 { result.push("\r") }
+            else if esc == 92 { result.push("\\") }
+            else if esc == 34 { result.push("\"") }
+            else if esc == 47 { result.push("/") }
+            else { result.push(char_to_str(esc)) }
+        } else {
+            result.push(char_to_str(advance()))
+        }
+    }
+
+    if pos >= input_len {
+        parse_error("unterminated string")
+    }
+    pos += 1
+    return result.join("")
+}
+
+fn parse_number() -> f64 {
+    let start = pos
+    // Optional minus
+    if peek() == 45 { pos += 1 }
+    // Digits
+    while pos < input_len and peek() >= 48 and peek() <= 57 {
+        pos += 1
+    }
+    // Optional decimal
+    if pos < input_len and peek() == 46 {
+        pos += 1
+        while pos < input_len and peek() >= 48 and peek() <= 57 {
+            pos += 1
+        }
+    }
+    let num_str = input.substr(start, pos - start)
+    // Convert to f64 via str_to_i64 for integers, or just use the string
+    // We'll use a simple approach: parse as integer if no dot
+    if num_str.contains(".") {
+        // For now, parse integer and decimal parts separately
+        let parts = num_str.split(".")
+        let integer_part = str_to_i64(parts[0])
+        let dec_str = parts[1]
+        let mut dec_val: f64 = 0.0
+        let mut divisor: f64 = 10.0
+        for i in 0..dec_str.len {
+            let digit = dec_str.char_at(i) - 48
+            dec_val = dec_val + digit / divisor
+            divisor = divisor * 10.0
+        }
+        if integer_part < 0 {
+            return integer_part - dec_val
+        }
+        return integer_part + dec_val
+    }
+    return str_to_i64(num_str)
+}
+
+fn parse_value() -> i64 {
+    skip_whitespace()
+
+    if pos >= input_len {
+        return parse_error("unexpected end of input")
+    }
+
+    let c = peek()
+
+    // String
+    if c == 34 {
+        return json_new_string(parse_string())
+    }
+
+    // Number
+    if c == 45 or (c >= 48 and c <= 57) {
+        return json_new_number(parse_number())
+    }
+
+    // true
+    if c == 116 and input.substr(pos, 4) == "true" {
+        pos += 4
+        return json_new_bool(true)
+    }
+
+    // false
+    if c == 102 and input.substr(pos, 5) == "false" {
+        pos += 5
+        return json_new_bool(false)
+    }
+
+    // null
+    if c == 110 and input.substr(pos, 4) == "null" {
+        pos += 4
+        return json_new_null()
+    }
+
+    // Array
+    if c == 91 {
+        pos += 1
+        let arr_id = json_new_array()
+        skip_whitespace()
+        if peek() == 93 {
+            pos += 1
+            return arr_id
+        }
+        let mut first: bool = true
+        while pos < input_len {
+            if not first {
+                skip_whitespace()
+                if peek() != 44 {
+                    break
+                }
+                pos += 1
+            }
+            first = false
+            let child = parse_value()
+            pool[arr_id].arr_val.push(child)
+        }
+        skip_whitespace()
+        if peek() != 93 {
+            return parse_error("expected ']'")
+        }
+        pos += 1
+        return arr_id
+    }
+
+    // Object
+    if c == 123 {
+        pos += 1
+        let obj_id = json_new_object()
+        skip_whitespace()
+        if peek() == 125 {
+            pos += 1
+            return obj_id
+        }
+        let mut first: bool = true
+        while pos < input_len {
+            if not first {
+                skip_whitespace()
+                if peek() != 44 {
+                    break
+                }
+                pos += 1
+            }
+            first = false
+            skip_whitespace()
+            if peek() != 34 {
+                return parse_error("expected string key")
+            }
+            let key = parse_string()
+            skip_whitespace()
+            if peek() != 58 {
+                return parse_error("expected ':'")
+            }
+            pos += 1
+            let val = parse_value()
+            pool[obj_id].obj_keys.push(key)
+            pool[obj_id].obj_vals.push(val)
+        }
+        skip_whitespace()
+        if peek() != 125 {
+            return parse_error("expected '}'")
+        }
+        pos += 1
+        return obj_id
+    }
+
+    return parse_error(format("unexpected character: '{}'", char_to_str(c)))
+}
+
+fn json_parse(text: str) -> i64 {
+    input = text
+    input_len = text.len
+    pos = 0
+    return parse_value()
+}
+
+// ============================================================
+// Accessors
+// ============================================================
+
+fn json_get(id: i64, key: str) -> i64
+    requires id >= 0
+    requires id < pool.len
+{
+    let v = pool[id]
+    if v.tag != JSON_OBJECT() {
+        eprintln("json_get called on non-object")
+        return -1
+    }
+    for i in 0..v.obj_keys.len {
+        if v.obj_keys[i] == key {
+            return v.obj_vals[i]
+        }
+    }
+    return -1
+}
+
+fn json_index(id: i64, idx: i64) -> i64
+    requires id >= 0
+{
+    let v = pool[id]
+    if v.tag != JSON_ARRAY() {
+        eprintln("json_index called on non-array")
+        return -1
+    }
+    if idx < 0 or idx >= v.arr_val.len {
+        return -1
+    }
+    return v.arr_val[idx]
+}
+
+fn json_str(id: i64) -> str {
+    if id < 0 or id >= pool.len { return "" }
+    return pool[id].str_val
+}
+
+fn json_num(id: i64) -> f64 {
+    if id < 0 or id >= pool.len { return 0.0 }
+    return pool[id].num_val
+}
+
+fn json_bool(id: i64) -> bool {
+    if id < 0 or id >= pool.len { return false }
+    return pool[id].bool_val
+}
+
+fn json_is_null(id: i64) -> bool {
+    if id < 0 or id >= pool.len { return true }
+    return pool[id].tag == JSON_NULL()
+}
+
+fn json_len(id: i64) -> i64 {
+    if id < 0 or id >= pool.len { return 0 }
+    let v = pool[id]
+    if v.tag == JSON_ARRAY() { return v.arr_val.len }
+    if v.tag == JSON_OBJECT() { return v.obj_keys.len }
+    return 0
+}
+
+// ============================================================
+// Pretty printer
+// ============================================================
+
+fn json_stringify(id: i64, indent_level: i64) -> str {
+    if id < 0 or id >= pool.len { return "null" }
+    let v = pool[id]
+
+    if v.tag == JSON_NULL() { return "null" }
+    if v.tag == JSON_BOOL() {
+        if v.bool_val { return "true" }
+        return "false"
+    }
+    if v.tag == JSON_NUMBER() {
+        return format("{}", v.num_val)
+    }
+    if v.tag == JSON_STRING() {
+        return "\"" + v.str_val + "\""
+    }
+
+    let indent_str = "  "
+    let mut current_indent: [str] = []
+    let mut next_indent: [str] = []
+    for _i in 0..indent_level {
+        current_indent.push(indent_str)
+    }
+    for _i in 0..indent_level + 1 {
+        next_indent.push(indent_str)
+    }
+    let ci = current_indent.join("")
+    let ni = next_indent.join("")
+
+    if v.tag == JSON_ARRAY() {
+        if v.arr_val.len == 0 { return "[]" }
+        let mut parts: [str] = []
+        for i in 0..v.arr_val.len {
+            parts.push(ni + json_stringify(v.arr_val[i], indent_level + 1))
+        }
+        return "[\n" + parts.join(",\n") + "\n" + ci + "]"
+    }
+
+    if v.tag == JSON_OBJECT() {
+        if v.obj_keys.len == 0 { return "{}" }
+        let mut parts: [str] = []
+        for i in 0..v.obj_keys.len {
+            let key_str = "\"" + v.obj_keys[i] + "\""
+            let val_str = json_stringify(v.obj_vals[i], indent_level + 1)
+            parts.push(ni + key_str + ": " + val_str)
+        }
+        return "{\n" + parts.join(",\n") + "\n" + ci + "}"
+    }
+
+    return "null"
+}
+
+// ============================================================
+// Tests and demo
+// ============================================================
+
+test "parse primitives" {
+    let n = json_parse("null")
+    assert(json_is_null(n))
+
+    let t = json_parse("true")
+    assert(json_bool(t) == true)
+
+    let f = json_parse("false")
+    assert(json_bool(f) == false)
+
+    let num = json_parse("42")
+    assert(json_num(num) == 42.0)
+
+    let s = json_parse("\"hello\"")
+    assert(json_str(s) == "hello")
+}
+
+test "parse array" {
+    let arr = json_parse("[1, 2, 3]")
+    assert(json_len(arr) == 3)
+    assert(json_num(json_index(arr, 0)) == 1.0)
+    assert(json_num(json_index(arr, 1)) == 2.0)
+    assert(json_num(json_index(arr, 2)) == 3.0)
+}
+
+test "parse object" {
+    let obj = json_parse("{\"name\": \"Alpha\", \"version\": 1}")
+    assert(json_str(json_get(obj, "name")) == "Alpha")
+    assert(json_num(json_get(obj, "version")) == 1.0)
+}
+
+test "parse nested" {
+    let data = json_parse("{\"users\": [{\"name\": \"Alice\", \"age\": 30}, {\"name\": \"Bob\", \"age\": 25}]}")
+    let users = json_get(data, "users")
+    assert(json_len(users) == 2)
+    assert(json_str(json_get(json_index(users, 0), "name")) == "Alice")
+    assert(json_num(json_get(json_index(users, 1), "age")) == 25.0)
+}
+
+fn main() {
+    let text = "{\"name\": \"Alpha\", \"version\": 1.0, \"features\": [\"fast\", \"safe\", \"simple\"], \"meta\": {\"self_hosted\": true, \"lines\": 2000}}"
+
+    let root = json_parse(text)
+    println(json_stringify(root, 0))
+
+    // Access nested data
+    println(format("Name: {}", json_str(json_get(root, "name"))))
+    println(format("Version: {}", json_num(json_get(root, "version"))))
+
+    let features = json_get(root, "features")
+    println(format("Features: {}", json_len(features)))
+    for i in 0..json_len(features) {
+        println(format("  - {}", json_str(json_index(features, i))))
+    }
+
+    let meta = json_get(root, "meta")
+    println(format("Self-hosted: {}", json_bool(json_get(meta, "self_hosted"))))
+    println(format("Lines: {}", json_num(json_get(meta, "lines"))))
+}

@@ -1,0 +1,97 @@
+// A real program: CSV parser and analyzer
+// Demonstrates arrays, strings, format, structs, methods
+
+struct Record {
+    name: str
+    age: i64
+    score: f64
+}
+
+fn parse_csv_line(line: str) -> Record {
+    // Find first comma
+    let mut i: i64 = 0
+    while i < line.len and line.char_at(i) != 44 {
+        i += 1
+    }
+    let name = line.substr(0, i)
+    i += 1
+
+    // Find second comma
+    let mut j = i
+    while j < line.len and line.char_at(j) != 44 {
+        j += 1
+    }
+    let age_str = line.substr(i, j - i)
+    j += 1
+
+    let score_str = line.substr(j, line.len - j)
+
+    return Record {
+        name: name,
+        age: str_to_i64(age_str),
+        score: 0.0
+    }
+}
+
+fn find_oldest(records: [Record]) -> str
+    requires records.len > 0
+{
+    let mut max_age: i64 = 0
+    let mut max_name: str = ""
+    let mut i: i64 = 0
+    while i < records.len {
+        if records[i].age > max_age {
+            max_age = records[i].age
+            max_name = records[i].name
+        }
+        i += 1
+    }
+    return max_name
+}
+
+fn average_age(records: [Record]) -> i64
+    requires records.len > 0
+{
+    let mut total: i64 = 0
+    let mut i: i64 = 0
+    while i < records.len {
+        total += records[i].age
+        i += 1
+    }
+    return total / records.len
+}
+
+fn main() {
+    // Parse CSV data
+    let mut records: [Record] = []
+
+    records.push(parse_csv_line("Alice,30,95.5"))
+    records.push(parse_csv_line("Bob,25,88.0"))
+    records.push(parse_csv_line("Charlie,35,92.3"))
+    records.push(parse_csv_line("Diana,28,97.1"))
+
+    println(format("Loaded {} records", records.len))
+
+    // Print all records
+    let mut i: i64 = 0
+    while i < records.len {
+        let r = records[i]
+        println(format("  {}: age {}", r.name, r.age))
+        i += 1
+    }
+
+    // Analysis
+    println(format("Oldest: {}", find_oldest(records)))
+    println(format("Average age: {}", average_age(records)))
+
+    // Filter: find people over 28
+    let mut seniors: [Record] = []
+    i = 0
+    while i < records.len {
+        if records[i].age > 28 {
+            seniors.push(records[i])
+        }
+        i += 1
+    }
+    println(format("People over 28: {}", seniors.len))
+}

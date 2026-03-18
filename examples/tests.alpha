@@ -1,0 +1,78 @@
+// Alpha testing: just use assert() — it figures out the rest
+
+fn fibonacci(n: i64) -> i64 {
+    if n <= 1 { return n }
+    return fibonacci(n - 1) + fibonacci(n - 2)
+}
+
+test "fibonacci" {
+    assert(fibonacci(0) == 0)
+    assert(fibonacci(1) == 1)
+    assert(fibonacci(5) == 5)
+    assert(fibonacci(10) == 55)
+    assert(fibonacci(20) == 6765)
+}
+
+fn abs_val(n: i64) -> i64 {
+    if n < 0 { return 0 - n }
+    return n
+}
+
+test "abs" {
+    assert(abs_val(5) == 5)
+    assert(abs_val(-5) == 5)
+    assert(abs_val(0) == 0)
+    assert(abs_val(-1) > 0)
+}
+
+test "arithmetic" {
+    assert(2 + 2 == 4)
+    assert(10 - 3 == 7)
+    assert(6 * 7 == 42)
+    assert(100 / 10 == 10)
+    assert(17 % 5 == 2)
+}
+
+test "comparisons" {
+    assert(1 < 2)
+    assert(10 > 5)
+    assert(5 == 5)
+    assert(3 != 4)
+    assert(3 <= 3)
+    assert(3 >= 3)
+}
+
+test "strings" {
+    assert(len("hello") == 5)
+    assert(len("") == 0)
+    assert(str_char_at("ABC", 0) == 65)
+    assert(str_substr("hello world", 0, 5) == "hello")
+    assert(str_contains("hello world", "world"))
+}
+
+test "booleans" {
+    assert(true and true)
+    assert(not false)
+    assert(true or false)
+    assert(not (true and false))
+}
+
+struct Point {
+    x: i64
+    y: i64
+}
+
+fn point_sum(p: Point) -> i64 {
+    return p.x + p.y
+}
+
+test "structs" {
+    let p = Point { x: 3, y: 4 }
+    assert(p.x == 3)
+    assert(p.y == 4)
+    assert(point_sum(p) == 7)
+}
+
+fn main() {
+    println("Use: alphac test tests.alpha")
+}
