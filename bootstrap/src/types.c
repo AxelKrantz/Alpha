@@ -31,6 +31,12 @@ void type_table_init(TypeTable *tt) {
     tt->user_type_count = 0;
     tt->user_type_cap = 0;
     tt->current_scope = NULL;
+    tt->generic_defs = NULL;
+    tt->generic_def_count = 0;
+    tt->generic_def_cap = 0;
+    tt->mono_instances = NULL;
+    tt->mono_instance_count = 0;
+    tt->mono_instance_cap = 0;
 
     // Push global scope
     scope_push(tt);
@@ -196,6 +202,7 @@ const char *type_kind_name(TypeKind kind) {
         case TYPE_FN:      return "fn";
         case TYPE_MAP:     return "map";
         case TYPE_OPTION:  return "option";
+        case TYPE_PARAM:   return "T";
         case TYPE_UNKNOWN: return "unknown";
     }
     return "?";
@@ -253,6 +260,7 @@ const char *type_to_c(Type *t) {
             snprintf(map_buf, sizeof(map_buf), "AlphaMap_%s", suffix);
             return map_buf;
         }
+        case TYPE_PARAM:   return "/* TYPE_PARAM */void";
         case TYPE_UNKNOWN: return "int64_t";
     }
     return "void";
@@ -268,6 +276,125 @@ Type *type_new_option(TypeTable *tt, Type *inner_type) {
     Type *t = type_new(tt, TYPE_OPTION, NULL);
     t->option_info.inner_type = inner_type;
     return t;
+}
+
+Type *type_new_param(TypeTable *tt, const char *name, int index) {
+    Type *t = type_new(tt, TYPE_PARAM, name);
+    t->param_info.index = index;
+    return t;
+}
+
+// ---- Generics ----
+
+void register_generic_def(TypeTable *tt, const char *name, char **param_names, int param_count, void *ast_node, bool is_struct) {
+    if (tt->generic_def_count >= tt->generic_def_cap) {
+        tt->generic_def_cap = tt->generic_def_cap ? tt->generic_def_cap * 2 : 16;
+        tt->generic_defs = realloc(tt->generic_defs, sizeof(GenericDef) * tt->generic_def_cap);
+    }
+    GenericDef *def = &tt->generic_defs[tt->generic_def_count++];
+    def->name = my_strdup(name);
+    def->type_param_names = param_names;
+    def->type_param_count = param_count;
+    def->ast_node = ast_node;
+    def->is_struct = is_struct;
+}
+
+GenericDef *find_generic_def(TypeTable *tt, const char *name) {
+    for (int i = 0; i < tt->generic_def_count; i++) {
+        if (strcmp(tt->generic_defs[i].name, name) == 0)
+            return &tt->generic_defs[i];
+    }
+    return NULL;
+}
+
+static const char *type_mangle_suffix(Type *t) {
+    static char buf[128];
+    if (!t) return "void";
+    switch (t->kind) {
+        case TYPE_I64: case TYPE_I32: case TYPE_I16: case TYPE_I8: return "i64";
+        case TYPE_U64: case TYPE_U32: case TYPE_U16: return "i64";
+        case TYPE_U8: return "u8";
+        case TYPE_F64: case TYPE_F32: return "f64";
+        case TYPE_STR: return "str";
+        case TYPE_BOOL: return "bool";
+        case TYPE_STRUCT: return t->name ? t->name : "struct";
+        case TYPE_ARRAY:
+            snprintf(buf, sizeof(buf), "arr_%s", type_mangle_suffix(t->array_info.element));
+            return buf;
+        case TYPE_OPTION:
+            snprintf(buf, sizeof(buf), "opt_%s", type_mangle_suffix(t->option_info.inner_type));
+            return buf;
+        default: return "unknown";
+    }
+}
+
+char *mangle_generic_name(const char *base, Type **types, int count) {
+    char buf[512];
+    int pos = snprintf(buf, sizeof(buf), "%s", base);
+    for (int i = 0; i < count; i++) {
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "_%s", type_mangle_suffix(types[i]));
+    }
+    return my_strdup(buf);
+}
+
+MonoInstance *find_mono_instance(TypeTable *tt, const char *name, Type **types, int count) {
+    for (int i = 0; i < tt->mono_instance_count; i++) {
+        MonoInstance *mi = &tt->mono_instances[i];
+        if (strcmp(mi->generic_name, name) != 0) continue;
+        if (mi->type_count != count) continue;
+        bool match = true;
+        for (int j = 0; j < count; j++) {
+            if (!type_equals(mi->concrete_types[j], types[j])) { match = false; break; }
+        }
+        if (match) return mi;
+    }
+    return NULL;
+}
+
+MonoInstance *add_mono_instance(TypeTable *tt, const char *name, Type **types, int count) {
+    if (tt->mono_instance_count >= tt->mono_instance_cap) {
+        tt->mono_instance_cap = tt->mono_instance_cap ? tt->mono_instance_cap * 2 : 16;
+        tt->mono_instances = realloc(tt->mono_instances, sizeof(MonoInstance) * tt->mono_instance_cap);
+    }
+    MonoInstance *mi = &tt->mono_instances[tt->mono_instance_count++];
+    mi->generic_name = my_strdup(name);
+    mi->concrete_types = malloc(sizeof(Type *) * count);
+    memcpy(mi->concrete_types, types, sizeof(Type *) * count);
+    mi->type_count = count;
+    mi->mangled_name = mangle_generic_name(name, types, count);
+    return mi;
+}
+
+Type *type_substitute(TypeTable *tt, Type *t, int param_count, Type **concrete) {
+    if (!t) return NULL;
+    if (t->kind == TYPE_PARAM) {
+        int idx = t->param_info.index;
+        if (idx >= 0 && idx < param_count) return concrete[idx];
+        return t;
+    }
+    if (t->kind == TYPE_ARRAY) {
+        Type *elem = type_substitute(tt, t->array_info.element, param_count, concrete);
+        if (elem == t->array_info.element) return t;
+        return type_new_array(tt, elem);
+    }
+    if (t->kind == TYPE_OPTION) {
+        Type *inner = type_substitute(tt, t->option_info.inner_type, param_count, concrete);
+        if (inner == t->option_info.inner_type) return t;
+        return type_new_option(tt, inner);
+    }
+    if (t->kind == TYPE_REF) {
+        Type *inner = type_substitute(tt, t->ref_info.inner, param_count, concrete);
+        if (inner == t->ref_info.inner) return t;
+        return type_new_ref(tt, inner, t->ref_info.is_mut);
+    }
+    if (t->kind == TYPE_FN) {
+        Type **params = malloc(sizeof(Type *) * t->fn_info.param_count);
+        for (int i = 0; i < t->fn_info.param_count; i++)
+            params[i] = type_substitute(tt, t->fn_info.params[i], param_count, concrete);
+        Type *ret = type_substitute(tt, t->fn_info.ret, param_count, concrete);
+        return type_new_fn(tt, params, t->fn_info.param_count, ret);
+    }
+    return t; // concrete types pass through unchanged
 }
 
 const char *type_array_suffix(Type *elem) {

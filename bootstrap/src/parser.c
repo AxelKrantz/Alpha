@@ -772,6 +772,20 @@ static ASTNode *parse_fn_decl(Parser *p, bool is_pub) {
     parser_expect(p, TOK_IDENT);
     char *name = token_to_str(&p->previous);
 
+    // Parse optional type parameters: <T, U>
+    NodeList fn_type_params;
+    node_list_init(&fn_type_params);
+    if (parser_check(p, TOK_LT)) {
+        parser_advance(p);
+        do {
+            parser_expect(p, TOK_IDENT);
+            ASTNode *tp = ast_new(NODE_TYPE_BASIC, p->previous.line, p->previous.column);
+            tp->type_basic.name = token_to_str(&p->previous);
+            node_list_push(&fn_type_params, tp);
+        } while (parser_match(p, TOK_COMMA));
+        parser_expect(p, TOK_GT);
+    }
+
     FieldList params = parse_params(p);
 
     ASTNode *return_type = NULL;
@@ -816,6 +830,7 @@ static ASTNode *parse_fn_decl(Parser *p, bool is_pub) {
     node->fn_decl.is_method = false;
     node->fn_decl.has_self = false;
     node->fn_decl.self_is_mut = false;
+    node->fn_decl.type_params = fn_type_params;
     node->fn_decl.examples = examples;
     node->fn_decl.panics = panics_list;
     node->fn_decl.requires = requires_list;
@@ -837,6 +852,20 @@ static ASTNode *parse_struct_decl(Parser *p, bool is_pub) {
 
     parser_expect(p, TOK_IDENT);
     char *name = token_to_str(&p->previous);
+
+    // Parse optional type parameters: <A, B>
+    NodeList struct_type_params;
+    node_list_init(&struct_type_params);
+    if (parser_check(p, TOK_LT)) {
+        parser_advance(p);
+        do {
+            parser_expect(p, TOK_IDENT);
+            ASTNode *tp = ast_new(NODE_TYPE_BASIC, p->previous.line, p->previous.column);
+            tp->type_basic.name = token_to_str(&p->previous);
+            node_list_push(&struct_type_params, tp);
+        } while (parser_match(p, TOK_COMMA));
+        parser_expect(p, TOK_GT);
+    }
 
     parser_expect(p, TOK_LBRACE);
     skip_newlines(p);
@@ -874,6 +903,7 @@ static ASTNode *parse_struct_decl(Parser *p, bool is_pub) {
     ASTNode *node = ast_new(NODE_STRUCT_DECL, line, col);
     node->struct_decl.name = name;
     node->struct_decl.invariants = invariants;
+    node->struct_decl.type_params = struct_type_params;
     node->struct_decl.fields = fields;
     node->struct_decl.is_pub = is_pub;
     return node;

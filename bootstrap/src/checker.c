@@ -132,6 +132,62 @@ static Type *resolve_type_node(Checker *c, ASTNode *node) {
     }
 }
 
+// Resolve type node in generic context (type param names -> TYPE_PARAM)
+static Type *resolve_type_node_generic(Checker *c, ASTNode *node, char **param_names, int param_count) {
+    if (!node) return c->types.t_void;
+    if (node->type == NODE_TYPE_BASIC) {
+        // Check if it's a type parameter
+        for (int i = 0; i < param_count; i++) {
+            if (strcmp(node->type_basic.name, param_names[i]) == 0) {
+                return type_new_param(&c->types, param_names[i], i);
+            }
+        }
+        return type_resolve_name(&c->types, node->type_basic.name);
+    }
+    if (node->type == NODE_TYPE_ARRAY) {
+        return type_new_array(&c->types,
+            resolve_type_node_generic(c, node->type_array.element_type, param_names, param_count));
+    }
+    if (node->type == NODE_TYPE_REF) {
+        return type_new_ref(&c->types,
+            resolve_type_node_generic(c, node->type_ref.inner, param_names, param_count),
+            node->type_ref.is_mut);
+    }
+    if (node->type == NODE_TYPE_GENERIC) {
+        // Handle Option<T>, Map<T> etc
+        if (strcmp(node->type_generic.name, "Option") == 0 && node->type_generic.type_args.count > 0)
+            return type_new_option(&c->types, resolve_type_node_generic(c, node->type_generic.type_args.items[0], param_names, param_count));
+        if (strcmp(node->type_generic.name, "Map") == 0 && node->type_generic.type_args.count > 0)
+            return type_new_map(&c->types, resolve_type_node_generic(c, node->type_generic.type_args.items[0], param_names, param_count));
+        return type_resolve_name(&c->types, node->type_generic.name);
+    }
+    return resolve_type_node(c, node);
+}
+
+// Unify a type pattern (may contain TYPE_PARAM) against a concrete type
+static bool unify_types(Type *pattern, Type *concrete, Type **type_args, int param_count) {
+    if (!pattern || !concrete) return true;
+    if (pattern->kind == TYPE_PARAM) {
+        int idx = pattern->param_info.index;
+        if (idx < 0 || idx >= param_count) return false;
+        if (type_args[idx] == NULL) {
+            type_args[idx] = concrete;
+            return true;
+        }
+        return type_equals(type_args[idx], concrete);
+    }
+    if (pattern->kind == TYPE_ARRAY && concrete->kind == TYPE_ARRAY) {
+        return unify_types(pattern->array_info.element, concrete->array_info.element, type_args, param_count);
+    }
+    if (pattern->kind == TYPE_OPTION && concrete->kind == TYPE_OPTION) {
+        return unify_types(pattern->option_info.inner_type, concrete->option_info.inner_type, type_args, param_count);
+    }
+    if (pattern->kind == TYPE_REF && concrete->kind == TYPE_REF) {
+        return unify_types(pattern->ref_info.inner, concrete->ref_info.inner, type_args, param_count);
+    }
+    return true; // non-parameterized types are compatible
+}
+
 // ---- Register impl block ----
 
 static void register_impl(Checker *c, const char *struct_name, ASTNode *impl_node) {
@@ -366,6 +422,56 @@ static Type *check_expr(Checker *c, ASTNode *node) {
                         check_expr(c, node->call.args.items[i]);
                     }
                     result = c->types.t_f64;
+                    break;
+                }
+
+                // Check all args first (needed for type inference)
+                for (int i = 0; i < node->call.args.count; i++) {
+                    check_expr(c, node->call.args.items[i]);
+                }
+
+                // Generic function?
+                GenericDef *gdef = find_generic_def(&c->types, name);
+                if (gdef && !gdef->is_struct) {
+                    ASTNode *fn_ast = (ASTNode *)gdef->ast_node;
+                    int tpc = gdef->type_param_count;
+
+                    // Resolve param types in generic context
+                    Type **type_args = calloc(tpc, sizeof(Type *));
+
+                    // Unify each parameter with call arg type
+                    for (int i = 0; i < fn_ast->fn_decl.params.count && i < node->call.args.count; i++) {
+                        Type *param_pattern = resolve_type_node_generic(c,
+                            fn_ast->fn_decl.params.items[i].type,
+                            gdef->type_param_names, tpc);
+                        Type *arg_type = node->call.args.items[i]->resolved_type;
+                        if (arg_type) unify_types(param_pattern, arg_type, type_args, tpc);
+                    }
+
+                    // Check all type args were inferred
+                    bool all_inferred = true;
+                    for (int i = 0; i < tpc; i++) {
+                        if (!type_args[i]) { all_inferred = false; break; }
+                    }
+
+                    if (all_inferred) {
+                        // Find or create monomorphized instance
+                        MonoInstance *mi = find_mono_instance(&c->types, name, type_args, tpc);
+                        if (!mi) mi = add_mono_instance(&c->types, name, type_args, tpc);
+
+                        // Set mangled name on the call for codegen
+                        node->call.mono_name = mi->mangled_name;
+
+                        // Compute return type
+                        Type *ret_pattern = resolve_type_node_generic(c,
+                            fn_ast->fn_decl.return_type,
+                            gdef->type_param_names, tpc);
+                        result = type_substitute(&c->types, ret_pattern, tpc, type_args);
+                    } else {
+                        check_error(c, node->line, node->column,
+                            "cannot infer type parameters for generic function '%s'", name);
+                    }
+                    free(type_args);
                     break;
                 }
 
@@ -848,6 +954,15 @@ static void register_decl(Checker *c, ASTNode *node) {
         }
 
         case NODE_FN_DECL: {
+            // Generic functions: register as template, don't create concrete type
+            if (node->fn_decl.type_params.count > 0) {
+                int tpc = node->fn_decl.type_params.count;
+                char **names = malloc(sizeof(char *) * tpc);
+                for (int i = 0; i < tpc; i++)
+                    names[i] = node->fn_decl.type_params.items[i]->type_basic.name;
+                register_generic_def(&c->types, node->fn_decl.name, names, tpc, node, false);
+                break;
+            }
             // Build function type
             int param_count = node->fn_decl.params.count;
             Type **params = NULL;

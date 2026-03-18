@@ -25,6 +25,11 @@ typedef struct {
     int owned_count;
     int owned_cap;
     int scope_depth;
+    // Generics
+    char **subst_param_names;
+    Type **subst_concrete;
+    int subst_count;
+    void *type_table; // TypeTable* for monomorphization
     // Lambda tracking
     int lambda_count;
     ASTNode **lambdas;     // collected during emit, hoisted to top
@@ -33,5 +38,8 @@ typedef struct {
 
 void codegen_init(CodeGen *gen, FILE *out);
 void codegen_emit(CodeGen *gen, ASTNode *program);
+// For generics: pass type table to emit monomorphized functions
+struct TypeTable;
+void codegen_set_types(CodeGen *gen, struct TypeTable *types);
 
 #endif

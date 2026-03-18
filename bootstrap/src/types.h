@@ -25,6 +25,7 @@ typedef enum {
     TYPE_FN,
     TYPE_MAP,
     TYPE_OPTION,
+    TYPE_PARAM,    // unresolved type parameter (T, U)
     TYPE_UNKNOWN,
 } TypeKind;
 
@@ -80,6 +81,11 @@ struct Type {
         struct {
             Type *inner_type;
         } option_info;
+
+        // TYPE_PARAM
+        struct {
+            int index;  // position in type_params list
+        } param_info;
     };
 };
 
@@ -100,6 +106,23 @@ typedef struct Scope {
     int capacity;
     struct Scope *parent;
 } Scope;
+
+// Generic function/struct template
+typedef struct {
+    char *name;
+    char **type_param_names;
+    int type_param_count;
+    void *ast_node;  // ASTNode* (avoid circular include)
+    bool is_struct;
+} GenericDef;
+
+// Monomorphized specialization
+typedef struct {
+    char *generic_name;
+    Type **concrete_types;
+    int type_count;
+    char *mangled_name;
+} MonoInstance;
 
 // Type table: owns all types and scopes
 typedef struct {
@@ -126,6 +149,15 @@ typedef struct {
 
     // Scope stack
     Scope *current_scope;
+
+    // Generics
+    GenericDef *generic_defs;
+    int generic_def_count;
+    int generic_def_cap;
+
+    MonoInstance *mono_instances;
+    int mono_instance_count;
+    int mono_instance_cap;
 } TypeTable;
 
 // Type table operations
@@ -137,6 +169,15 @@ Type *type_new_array(TypeTable *tt, Type *element);
 Type *type_new_fn(TypeTable *tt, Type **params, int param_count, Type *ret);
 Type *type_new_map(TypeTable *tt, Type *value_type);
 Type *type_new_option(TypeTable *tt, Type *inner_type);
+Type *type_new_param(TypeTable *tt, const char *name, int index);
+
+// Generics
+void register_generic_def(TypeTable *tt, const char *name, char **param_names, int param_count, void *ast_node, bool is_struct);
+GenericDef *find_generic_def(TypeTable *tt, const char *name);
+MonoInstance *find_mono_instance(TypeTable *tt, const char *name, Type **types, int count);
+MonoInstance *add_mono_instance(TypeTable *tt, const char *name, Type **types, int count);
+char *mangle_generic_name(const char *base, Type **types, int count);
+Type *type_substitute(TypeTable *tt, Type *t, int param_count, Type **concrete);
 
 // Scope operations
 void scope_push(TypeTable *tt);

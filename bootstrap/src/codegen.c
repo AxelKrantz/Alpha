@@ -20,6 +20,10 @@ void codegen_init(CodeGen *gen, FILE *out) {
     gen->owned_count = 0;
     gen->owned_cap = 0;
     gen->scope_depth = 0;
+    gen->subst_param_names = NULL;
+    gen->subst_concrete = NULL;
+    gen->subst_count = 0;
+    gen->type_table = NULL;
     gen->lambda_count = 0;
     gen->lambdas = NULL;
     gen->lambda_cap = 0;
@@ -244,7 +248,17 @@ static void emit_type(CodeGen *gen, ASTNode *type) {
 
     switch (type->type) {
         case NODE_TYPE_BASIC:
+            // Check if this is a type parameter being substituted
+            if (gen->subst_count > 0) {
+                for (int si = 0; si < gen->subst_count; si++) {
+                    if (strcmp(type->type_basic.name, gen->subst_param_names[si]) == 0) {
+                        fprintf(gen->out, "%s", type_to_c(gen->subst_concrete[si]));
+                        goto type_done;
+                    }
+                }
+            }
             fprintf(gen->out, "%s", map_basic_type(type->type_basic.name));
+            type_done:
             break;
 
         case NODE_TYPE_REF:
@@ -254,15 +268,24 @@ static void emit_type(CodeGen *gen, ASTNode *type) {
 
         case NODE_TYPE_ARRAY: {
             // Map to AlphaArr_suffix for dynamic arrays
-            // Need to resolve the element type name
             if (type->type_array.element_type && type->type_array.element_type->type == NODE_TYPE_BASIC) {
                 const char *elem_name = type->type_array.element_type->type_basic.name;
+                // Check for type parameter substitution
+                if (gen->subst_count > 0) {
+                    for (int si = 0; si < gen->subst_count; si++) {
+                        if (strcmp(elem_name, gen->subst_param_names[si]) == 0) {
+                            elem_name = type_array_suffix(gen->subst_concrete[si]);
+                            break;
+                        }
+                    }
+                }
                 const char *suffix = "i64";
                 if (strcmp(elem_name, "f64") == 0 || strcmp(elem_name, "f32") == 0) suffix = "f64";
                 else if (strcmp(elem_name, "str") == 0) suffix = "str";
                 else if (strcmp(elem_name, "bool") == 0) suffix = "bool";
                 else if (strcmp(elem_name, "u8") == 0) suffix = "u8";
-                else if (elem_name[0] >= 'A' && elem_name[0] <= 'Z') suffix = elem_name; // struct
+                else if (elem_name[0] >= 'A' && elem_name[0] <= 'Z') suffix = elem_name;
+                else suffix = elem_name; // already substituted
                 fprintf(gen->out, "AlphaArr_%s", suffix);
             } else {
                 fprintf(gen->out, "AlphaArr_i64");
@@ -995,8 +1018,13 @@ static void emit_expr(CodeGen *gen, ASTNode *node) {
                 emit_builtin_call(gen, node->call.callee->ident.name, &node->call.args);
                 break;
             }
-            emit_expr(gen, node->call.callee);
-            fprintf(gen->out, "(");
+            // Generic call: use mangled name
+            if (node->call.mono_name) {
+                fprintf(gen->out, "%s(", node->call.mono_name);
+            } else {
+                emit_expr(gen, node->call.callee);
+                fprintf(gen->out, "(");
+            }
             for (int i = 0; i < node->call.args.count; i++) {
                 if (i > 0) fprintf(gen->out, ", ");
                 emit_expr(gen, node->call.args.items[i]);
@@ -1516,7 +1544,13 @@ static void emit_stmt(CodeGen *gen, ASTNode *node) {
             // Array: for item in array
             else if (iterable->resolved_type && iterable->resolved_type->kind == TYPE_ARRAY) {
                 Type *elem = iterable->resolved_type->array_info.element;
-                const char *elem_c = elem ? type_to_c(elem) : "int64_t";
+                // In generic context, use __auto_type since resolved types may not be concrete
+                const char *elem_c;
+                if (gen->subst_count > 0) {
+                    elem_c = "__auto_type";
+                } else {
+                    elem_c = elem ? type_to_c(elem) : "int64_t";
+                }
                 emit_indent(gen);
                 fprintf(gen->out, "for (int64_t _fi = 0; _fi < (");
                 emit_expr(gen, iterable);
@@ -1886,7 +1920,8 @@ static void emit_forward_decls(CodeGen *gen, ASTNode *program) {
     for (int i = 0; i < program->program.decls.count; i++) {
         ASTNode *decl = program->program.decls.items[i];
 
-        if (decl->type == NODE_FN_DECL && strcmp(decl->fn_decl.name, "main") != 0) {
+        if (decl->type == NODE_FN_DECL && strcmp(decl->fn_decl.name, "main") != 0
+            && decl->fn_decl.type_params.count == 0) {
             emit_type(gen, decl->fn_decl.return_type);
             fprintf(gen->out, " %s(", decl->fn_decl.name);
             for (int j = 0; j < decl->fn_decl.params.count; j++) {
@@ -2360,10 +2395,75 @@ void codegen_emit(CodeGen *gen, ASTNode *program) {
     // Forward declarations for functions
     emit_forward_decls(gen, program);
 
+    // Emit monomorphized generic functions
+    if (gen->type_table) {
+        TypeTable *tt = (TypeTable *)gen->type_table;
+        for (int mi = 0; mi < tt->mono_instance_count; mi++) {
+            MonoInstance *inst = &tt->mono_instances[mi];
+            GenericDef *gdef = find_generic_def(tt, inst->generic_name);
+            if (!gdef || gdef->is_struct) continue;
+
+            ASTNode *fn = (ASTNode *)gdef->ast_node;
+
+            // Set substitution context
+            gen->subst_param_names = gdef->type_param_names;
+            gen->subst_concrete = inst->concrete_types;
+            gen->subst_count = gdef->type_param_count;
+
+            // Emit return type
+            if (fn->fn_decl.return_type) {
+                emit_type(gen, fn->fn_decl.return_type);
+            } else {
+                fprintf(gen->out, "void");
+            }
+            fprintf(gen->out, " %s(", inst->mangled_name);
+
+            // Emit params
+            bool first = true;
+            for (int j = 0; j < fn->fn_decl.params.count; j++) {
+                if (!first) fprintf(gen->out, ", ");
+                first = false;
+                Field *param = &fn->fn_decl.params.items[j];
+                if (param->type) emit_type(gen, param->type);
+                else fprintf(gen->out, "int64_t");
+                fprintf(gen->out, " %s", param->name);
+            }
+            if (fn->fn_decl.params.count == 0) fprintf(gen->out, "void");
+            fprintf(gen->out, ") {\n");
+
+            // Emit body
+            gen->indent = 1;
+            int saved_defer = gen->defer_count;
+            int saved_owned = gen->owned_count;
+            gen->defer_count = 0;
+            gen->owned_count = 0;
+
+            if (fn->fn_decl.body) {
+                for (int j = 0; j < fn->fn_decl.body->block.stmts.count; j++) {
+                    emit_stmt(gen, fn->fn_decl.body->block.stmts.items[j]);
+                }
+            }
+
+            if (gen->owned_count > 0) emit_auto_cleanup(gen, NULL);
+            if (gen->defer_count > 0) emit_defers(gen);
+            gen->defer_count = saved_defer;
+            gen->owned_count = saved_owned;
+
+            gen->indent = 0;
+            fprintf(gen->out, "}\n\n");
+
+            // Clear substitution
+            gen->subst_count = 0;
+        }
+    }
+
     // Emit functions and impl blocks
     for (int i = 0; i < program->program.decls.count; i++) {
         ASTNode *decl = program->program.decls.items[i];
-        // In test mode, skip the user's main() — we generate our own
+        // Skip generic templates — monomorphized versions are emitted below
+        if (decl->type == NODE_FN_DECL && decl->fn_decl.type_params.count > 0) continue;
+        if (decl->type == NODE_STRUCT_DECL && decl->struct_decl.type_params.count > 0) continue;
+        // In test mode, skip the user's main()
         if (gen->test_mode && decl->type == NODE_FN_DECL &&
             strcmp(decl->fn_decl.name, "main") == 0) {
             continue;

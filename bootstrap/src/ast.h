@@ -102,11 +102,12 @@ struct ASTNode {
             bool is_method;
             bool has_self;
             bool self_is_mut;
+            NodeList type_params;   // generic: <T, U> (NODE_TYPE_BASIC nodes)
             NodeList examples;
             NodeList panics;
             NodeList requires;
             NodeList ensures;
-            ASTNode *recover_block; // NULL if no recover
+            ASTNode *recover_block;
         } fn_decl;
 
         // NODE_STRUCT_DECL
@@ -115,6 +116,7 @@ struct ASTNode {
             FieldList fields;
             bool is_pub;
             NodeList invariants;
+            NodeList type_params;   // generic: <A, B>
         } struct_decl;
 
         // NODE_ENUM_DECL
@@ -205,6 +207,7 @@ struct ASTNode {
         struct {
             ASTNode *callee;
             NodeList args;
+            char *mono_name; // set by checker for generic calls: "first_i64"
         } call;
 
         // NODE_METHOD_CALL
