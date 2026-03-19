@@ -169,7 +169,11 @@ let has_big = nums.any(fn(x: i64) -> bool { return x > 100 })
 let all_pos = nums.all(fn(x: i64) -> bool { return x > 0 })
 let n = nums.count(fn(x: i64) -> bool { return x > 5 })
 ```
-Lambdas are `fn(params) -> ret { body }`. Works with `[i64]`, `[f64]`, `[str]`, `[bool]`.
+Lambdas are `fn(params) -> ret { body }`. They capture variables from the enclosing scope:
+```alpha
+let threshold = 5
+let big = nums.filter(fn(x: i64) -> bool { return x > threshold })
+```
 Note: chaining across lines (`.filter().map()`) requires each call on the same line or intermediate variables.
 
 ### Format Strings
@@ -178,6 +182,25 @@ let msg = format("hello {}, age {}", name, age)
 println(format("{} items at {} each", count, price))
 ```
 `{}` auto-detects type (i64, f64, str, bool).
+
+### Generics
+```alpha
+fn first<T>(arr: [T]) -> T {
+    return arr[0]
+}
+
+fn contains<T>(arr: [T], target: T) -> bool {
+    for item in arr {
+        if item == target { return true }
+    }
+    return false
+}
+
+let x = first([1, 2, 3])         # T inferred as i64
+let s = first(["a", "b"])        # T inferred as str
+let found = contains(nums, 42)   # T inferred from args
+```
+Monomorphization: generates specialized C functions (`first_i64`, `first_str`) at compile time. Zero runtime overhead.
 
 ### Imports
 ```alpha
