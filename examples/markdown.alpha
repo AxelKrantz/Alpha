@@ -1,0 +1,267 @@
+// Markdown to HTML converter written in Alpha
+// Supports: headings, bold, italic, code, links, lists, paragraphs
+
+fn escape_html(s: str) -> str {
+    let result = s.replace("&", "&amp;")
+    let result2 = result.replace("<", "&lt;")
+    return result2.replace(">", "&gt;")
+}
+
+fn process_inline(line: str) -> str {
+    let mut result: [str] = []
+    let mut i: i64 = 0
+
+    while i < line.len {
+        let c = line.char_at(i)
+
+        // Bold: **text**
+        if c == 42 and i + 1 < line.len and line.char_at(i + 1) == 42 {
+            i += 2
+            let start = i
+            while i < line.len and not (line.char_at(i) == 42 and i + 1 < line.len and line.char_at(i + 1) == 42) {
+                i += 1
+            }
+            let inner = line.substr(start, i - start)
+            result.push("<strong>" + inner + "</strong>")
+            if i < line.len { i += 2 }
+            continue
+        }
+
+        // Italic: *text*
+        if c == 42 {
+            i += 1
+            let start = i
+            while i < line.len and line.char_at(i) != 42 {
+                i += 1
+            }
+            let inner = line.substr(start, i - start)
+            result.push("<em>" + inner + "</em>")
+            if i < line.len { i += 1 }
+            continue
+        }
+
+        // Inline code: `code`
+        if c == 96 {
+            i += 1
+            let start = i
+            while i < line.len and line.char_at(i) != 96 {
+                i += 1
+            }
+            let inner = escape_html(line.substr(start, i - start))
+            result.push("<code>" + inner + "</code>")
+            if i < line.len { i += 1 }
+            continue
+        }
+
+        // Link: [text](url)
+        if c == 91 {
+            i += 1
+            let text_start = i
+            while i < line.len and line.char_at(i) != 93 {
+                i += 1
+            }
+            let text = line.substr(text_start, i - text_start)
+            if i < line.len { i += 1 }
+            if i < line.len and line.char_at(i) == 40 {
+                i += 1
+                let url_start = i
+                while i < line.len and line.char_at(i) != 41 {
+                    i += 1
+                }
+                let url = line.substr(url_start, i - url_start)
+                if i < line.len { i += 1 }
+                result.push("<a href=\"" + url + "\">" + text + "</a>")
+                continue
+            }
+            result.push("[" + text + "]")
+            continue
+        }
+
+        result.push(char_to_str(c))
+        i += 1
+    }
+
+    return result.join("")
+}
+
+fn convert_markdown(input: str) -> str {
+    let lines = input.split("\n")
+    let mut html: [str] = []
+    let mut in_list: bool = false
+    let mut in_code_block: bool = false
+    let mut i: i64 = 0
+
+    while i < lines.len {
+        let line = lines[i]
+
+        // Code block: ```
+        if line.starts_with("```") {
+            if in_code_block {
+                html.push("</code></pre>")
+                in_code_block = false
+            } else {
+                html.push("<pre><code>")
+                in_code_block = true
+            }
+            i += 1
+            continue
+        }
+
+        if in_code_block {
+            html.push(escape_html(line))
+            html.push("\n")
+            i += 1
+            continue
+        }
+
+        // Close list if needed
+        if in_list and not line.starts_with("- ") {
+            html.push("</ul>")
+            in_list = false
+        }
+
+        // Empty line = paragraph break
+        if line.len == 0 {
+            html.push("")
+            i += 1
+            continue
+        }
+
+        // Headings
+        if line.starts_with("### ") {
+            html.push("<h3>" + process_inline(line.substr(4, line.len - 4)) + "</h3>")
+            i += 1
+            continue
+        }
+        if line.starts_with("## ") {
+            html.push("<h2>" + process_inline(line.substr(3, line.len - 3)) + "</h2>")
+            i += 1
+            continue
+        }
+        if line.starts_with("# ") {
+            html.push("<h1>" + process_inline(line.substr(2, line.len - 2)) + "</h1>")
+            i += 1
+            continue
+        }
+
+        // Horizontal rule
+        if line == "---" or line == "***" {
+            html.push("<hr>")
+            i += 1
+            continue
+        }
+
+        // List items
+        if line.starts_with("- ") {
+            if not in_list {
+                html.push("<ul>")
+                in_list = true
+            }
+            html.push("<li>" + process_inline(line.substr(2, line.len - 2)) + "</li>")
+            i += 1
+            continue
+        }
+
+        // Regular paragraph
+        html.push("<p>" + process_inline(line) + "</p>")
+        i += 1
+    }
+
+    if in_list { html.push("</ul>") }
+    if in_code_block { html.push("</code></pre>") }
+
+    return html.join("\n")
+}
+
+// ============================================================
+// Tests
+// ============================================================
+
+test "headings" {
+    assert(convert_markdown("# Hello") == "<h1>Hello</h1>")
+    assert(convert_markdown("## World") == "<h2>World</h2>")
+    assert(convert_markdown("### Sub") == "<h3>Sub</h3>")
+}
+
+test "bold and italic" {
+    assert(process_inline("**bold**") == "<strong>bold</strong>")
+    assert(process_inline("*italic*") == "<em>italic</em>")
+}
+
+test "inline code" {
+    assert(process_inline("`code`") == "<code>code</code>")
+}
+
+test "links" {
+    assert(process_inline("[Alpha](https://example.com)") == "<a href=\"https://example.com\">Alpha</a>")
+}
+
+test "lists" {
+    let md = "- one\n- two\n- three"
+    let html = convert_markdown(md)
+    assert(html.contains("<ul>"))
+    assert(html.contains("<li>one</li>"))
+    assert(html.contains("</ul>"))
+}
+
+test "horizontal rule" {
+    assert(convert_markdown("---") == "<hr>")
+}
+
+fn main() {
+    let markdown = """# Alpha Language
+
+Alpha is a **compiled**, *statically-typed* programming language.
+
+## Features
+
+- **Fast** — compiles to C
+- **Safe** — automatic memory management
+- *Self-hosting* — the compiler compiles itself
+- Inline `code` support
+
+## Links
+
+Check out [Alpha on GitHub](https://github.com/AxelKrantz/Alpha) for more.
+
+### Code Example
+
+```
+fn main() {
+    println("Hello, Alpha!")
+}
+```
+
+---
+
+Built with love."""
+
+    let html = convert_markdown(markdown)
+
+    // Write to file
+    let full_html = """<!DOCTYPE html>
+<html>
+<head>
+    <title>Alpha</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; line-height: 1.6; }
+        h1, h2, h3 { color: #333; }
+        code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }
+        pre { background: #f4f4f4; padding: 16px; border-radius: 6px; overflow-x: auto; }
+        pre code { padding: 0; background: none; }
+        a { color: #0066cc; }
+        hr { border: none; border-top: 1px solid #ddd; margin: 24px 0; }
+        ul { padding-left: 24px; }
+    </style>
+</head>
+<body>
+""" + html + """
+</body>
+</html>"""
+
+    file_write("/tmp/alpha_output.html", full_html)
+    println("Wrote /tmp/alpha_output.html")
+    println("")
+    println("Generated HTML:")
+    println(html)
+}
