@@ -268,7 +268,11 @@ struct ASTNode {
             FieldList params;
             ASTNode *return_type;
             ASTNode *body;
-            int id; // assigned during codegen for unique naming
+            int id;
+            // Captures (filled by checker)
+            char **capture_names;
+            Type **capture_types;
+            int capture_count;
         } lambda;
 
         // NODE_MATCH_EXPR

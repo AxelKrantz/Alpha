@@ -1344,8 +1344,20 @@ static void emit_expr(CodeGen *gen, ASTNode *node) {
                 gen->lambdas = realloc(gen->lambdas, sizeof(ASTNode *) * gen->lambda_cap);
             }
             gen->lambdas[id] = node;
-            // Emit just the function name — the actual function is hoisted
-            fprintf(gen->out, "__alpha_lambda_%d", id);
+
+            // If lambda captures variables, set the static capture vars before use
+            if (node->lambda.capture_count > 0) {
+                // Wrap in a statement expression to set captures then return the fn ptr
+                fprintf(gen->out, "({ ");
+                for (int ci = 0; ci < node->lambda.capture_count; ci++) {
+                    fprintf(gen->out, "__capture_%d_%s = %s; ",
+                            id, node->lambda.capture_names[ci],
+                            node->lambda.capture_names[ci]);
+                }
+                fprintf(gen->out, "__alpha_lambda_%d; })", id);
+            } else {
+                fprintf(gen->out, "__alpha_lambda_%d", id);
+            }
             break;
         }
 
@@ -2361,6 +2373,14 @@ void codegen_emit(CodeGen *gen, ASTNode *program) {
         // Now emit the collected lambda functions
         for (int i = 0; i < gen->lambda_count; i++) {
             ASTNode *lam = gen->lambdas[i];
+
+            // Emit static capture variables for closures
+            for (int ci = 0; ci < lam->lambda.capture_count; ci++) {
+                fprintf(gen->out, "static %s __capture_%d_%s;\n",
+                        type_to_c(lam->lambda.capture_types[ci]),
+                        i, lam->lambda.capture_names[ci]);
+            }
+
             // Emit: static RET __alpha_lambda_N(PARAMS) { BODY }
             if (lam->lambda.return_type) {
                 emit_type(gen, lam->lambda.return_type);
@@ -2380,6 +2400,14 @@ void codegen_emit(CodeGen *gen, ASTNode *program) {
             if (lam->lambda.params.count == 0) fprintf(gen->out, "void");
             fprintf(gen->out, ") {\n");
             gen->indent = 1;
+            // Create local aliases for captured variables
+            for (int ci = 0; ci < lam->lambda.capture_count; ci++) {
+                emit_indent(gen);
+                fprintf(gen->out, "%s %s = __capture_%d_%s;\n",
+                        type_to_c(lam->lambda.capture_types[ci]),
+                        lam->lambda.capture_names[ci],
+                        i, lam->lambda.capture_names[ci]);
+            }
             if (lam->lambda.body) {
                 for (int j = 0; j < lam->lambda.body->block.stmts.count; j++) {
                     emit_stmt(gen, lam->lambda.body->block.stmts.items[j]);

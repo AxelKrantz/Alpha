@@ -707,9 +707,12 @@ static Type *check_expr(Checker *c, ASTNode *node) {
         }
 
         case NODE_LAMBDA: {
+            // Collect param names for capture detection
+            int param_count = node->lambda.params.count;
+
             // Type-check lambda body with params in scope
             scope_push(&c->types);
-            for (int i = 0; i < node->lambda.params.count; i++) {
+            for (int i = 0; i < param_count; i++) {
                 Field *param = &node->lambda.params.items[i];
                 Type *pt = param->type ? resolve_type_node(c, param->type) : c->types.t_unknown;
                 scope_define(&c->types, param->name, pt, false);
@@ -722,8 +725,91 @@ static Type *check_expr(Checker *c, ASTNode *node) {
                 }
             }
             scope_pop(&c->types);
-            // Lambda type is FN
-            result = c->types.t_unknown; // function pointer type
+
+            // Detect captures: scan body for identifiers not in param list
+            // that exist in enclosing scope
+            node->lambda.capture_names = NULL;
+            node->lambda.capture_types = NULL;
+            node->lambda.capture_count = 0;
+
+            // Simple capture detection: walk body looking for NODE_IDENT
+            // This is a recursive walk - for simplicity, check top-level expressions
+            if (node->lambda.body) {
+                for (int si = 0; si < node->lambda.body->block.stmts.count; si++) {
+                    ASTNode *stmt = node->lambda.body->block.stmts.items[si];
+                    // Walk statement looking for identifiers
+                    // For now, check common patterns: return expr, expr stmt
+                    ASTNode *expr = NULL;
+                    if (stmt->type == NODE_RETURN_STMT) expr = stmt->return_stmt.value;
+                    else if (stmt->type == NODE_EXPR_STMT) expr = stmt->expr_stmt.expr;
+
+                    // Simple recursive scan of expression tree
+                    // Use a stack-based approach for common cases
+                    ASTNode *scan_stack[64];
+                    int scan_top = 0;
+                    if (expr) scan_stack[scan_top++] = expr;
+
+                    while (scan_top > 0) {
+                        ASTNode *e = scan_stack[--scan_top];
+                        if (!e) continue;
+
+                        if (e->type == NODE_IDENT) {
+                            const char *name = e->ident.name;
+                            // Check if it's a param
+                            bool is_param = false;
+                            for (int pi = 0; pi < param_count; pi++) {
+                                if (strcmp(node->lambda.params.items[pi].name, name) == 0) {
+                                    is_param = true; break;
+                                }
+                            }
+                            if (!is_param) {
+                                // Check if it's in enclosing scope
+                                Symbol *sym = scope_lookup(&c->types, name);
+                                if (sym && sym->type->kind != TYPE_FN) {
+                                    // Check not already captured
+                                    bool already = false;
+                                    for (int ci = 0; ci < node->lambda.capture_count; ci++) {
+                                        if (strcmp(node->lambda.capture_names[ci], name) == 0) {
+                                            already = true; break;
+                                        }
+                                    }
+                                    if (!already) {
+                                        int cc = node->lambda.capture_count;
+                                        node->lambda.capture_names = realloc(node->lambda.capture_names, sizeof(char*) * (cc + 1));
+                                        node->lambda.capture_types = realloc(node->lambda.capture_types, sizeof(Type*) * (cc + 1));
+                                        node->lambda.capture_names[cc] = (char*)name;
+                                        node->lambda.capture_types[cc] = sym->type;
+                                        node->lambda.capture_count = cc + 1;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Push children onto scan stack
+                        if (e->type == NODE_BINARY_EXPR && scan_top < 62) {
+                            scan_stack[scan_top++] = e->binary.left;
+                            scan_stack[scan_top++] = e->binary.right;
+                        } else if (e->type == NODE_UNARY_EXPR && scan_top < 63) {
+                            scan_stack[scan_top++] = e->unary.operand;
+                        } else if (e->type == NODE_CALL_EXPR && scan_top < 60) {
+                            scan_stack[scan_top++] = e->call.callee;
+                            for (int ai = 0; ai < e->call.args.count && scan_top < 63; ai++)
+                                scan_stack[scan_top++] = e->call.args.items[ai];
+                        } else if (e->type == NODE_FIELD_ACCESS && scan_top < 63) {
+                            scan_stack[scan_top++] = e->field_access.object;
+                        } else if (e->type == NODE_METHOD_CALL && scan_top < 60) {
+                            scan_stack[scan_top++] = e->method_call.object;
+                            for (int ai = 0; ai < e->method_call.args.count && scan_top < 63; ai++)
+                                scan_stack[scan_top++] = e->method_call.args.items[ai];
+                        } else if (e->type == NODE_INDEX_EXPR && scan_top < 62) {
+                            scan_stack[scan_top++] = e->index_expr.object;
+                            scan_stack[scan_top++] = e->index_expr.index;
+                        }
+                    }
+                }
+            }
+
+            result = c->types.t_unknown;
             break;
         }
 
