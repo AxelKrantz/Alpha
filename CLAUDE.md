@@ -1,21 +1,24 @@
 # Alpha Language
 
-Alpha is a compiled, statically-typed language that transpiles to C. It is designed to be easy for AI to write in.
+Alpha is a compiled, statically-typed language that transpiles to C. Designed for AI.
 
 ## Build & Run
 
 ```bash
 cd bootstrap && make            # build the compiler
-./alphac file.alpha -o output   # compile
+./alphac file.alpha -o output   # compile to binary
 ./alphac test file.alpha        # run tests
-./alphac test file.alpha --json # test with structured output
+./alphac test file.alpha --json # structured test output
 ./alphac watch file.alpha       # recompile on file change
 ./alphac --emit-c file.alpha    # show generated C
 ```
 
-## Syntax Reference
+## Types
 
-### Variables
+`i64` `f64` `bool` `str` `[T]` `Map<T>` `Option<T>` `Result<T>` structs enums `&T` `&mut T`
+
+## Variables
+
 ```alpha
 let x = 42                    # immutable, type inferred
 let name: str = "Alpha"       # explicit type
@@ -23,63 +26,35 @@ let mut counter: i64 = 0      # mutable
 counter += 1
 ```
 
-### Types
-`i64` `f64` `bool` `str` `[T]` (dynamic array) `Map<T>` (string-keyed hash map) `&T` `&mut T`
+## Functions
 
-### Functions
 ```alpha
 fn add(a: i64, b: i64) -> i64 {
     return a + b
 }
-
-# With contracts
-fn divide(a: i64, b: i64) -> i64
-    example divide(10, 2) == 5
-    requires b != 0
-    ensures result >= 0
-{
-    return a / b
-}
 ```
 
-### Control Flow
+## Control Flow
+
 ```alpha
-if x > 0 {
-    println("positive")
-} else if x == 0 {
-    println("zero")
-} else {
-    println("negative")
-}
+if x > 0 { } else if x == 0 { } else { }
 
-while i < 10 {
-    i += 1
-}
+while condition { }
 
-for i in 0..10 {       # range loop (0 to 9)
-    println(i)
-}
-
-for item in my_array { # iterate array elements
-    println(item)
-}
+for i in 0..10 { }            # range (0 to 9)
+for item in array { }          # iterate elements
 
 match n {
     0 => { println("zero") }
     1 => { println("one") }
     _ => { println("other") }
 }
-
-break    # inside loops
-continue # inside loops
 ```
 
-### Structs & Methods
+## Structs & Methods
+
 ```alpha
-struct Point {
-    x: f64
-    y: f64
-}
+struct Point { x: f64, y: f64 }
 
 impl Point {
     fn length(&self) -> f64 {
@@ -91,99 +66,41 @@ let p = Point { x: 3.0, y: 4.0 }
 println(p.length())
 ```
 
-### Dynamic Arrays
+## Traits
+
 ```alpha
-let mut nums: [i64] = []
-nums.push(10)
-nums.push(20)
-nums[0]              # index access
-nums.len             # length
-nums.pop()           # remove last
-nums.clear()         # empty
-nums.clone()         # copy
-nums.free()          # release memory
-
-let names = ["Alice", "Bob", "Charlie"]  # array literal
-```
-
-### Strings
-```alpha
-let s = "hello world"
-s.len                     # length
-s.contains("world")       # bool
-s.starts_with("hello")    # bool
-s.substr(0, 5)            # "hello"
-s.char_at(0)              # 104 (ASCII code)
-s.split(" ")              # ["hello", "world"]
-s.replace("world", "!")   # "hello !"
-s.trim()                  # strip whitespace
-"a" + "b"                 # concatenation
-s == "hello"              # comparison (uses strcmp)
-
-let parts = ["a", "b", "c"]
-parts.join(", ")          # "a, b, c"
-```
-
-### Hash Maps
-```alpha
-let mut m: Map<str> = map_new()   # string keys, string values
-let mut counts: Map<i64> = map_new() # string keys, i64 values
-
-m.set("key", "value")
-m.get("key", "default")  # returns value or default
-m.has("key")              # bool
-m.delete("key")
-m.len                     # number of entries
-m.keys()                  # returns [str]
-
-# Iterate
-for key in m.keys() {
-    println(format("{} = {}", key, m.get(key, "")))
+trait Display {
+    fn to_string(&self) -> str
 }
-```
 
-### Option Type (Error Handling)
-```alpha
-fn find(arr: [str], target: str) -> Option<str> {
-    for item in arr {
-        if item == target { return some(item) }
+impl Display for Point {
+    fn to_string(&self) -> str {
+        return format("({}, {})", self.x, self.y)
     }
-    return none
 }
 
-let result = find(names, "Bob")
-if result.is_some() {
-    println(result.unwrap())       # crashes if none
+println(p.to_string())
+```
+
+## Enums with Data
+
+```alpha
+enum Shape {
+    Circle(f64)
+    Rectangle(f64, f64)
+    Point
 }
-let safe = result.unwrap_or("nobody") # returns default if none
-println(result.is_none())            # check if empty
-```
-Supports `Option<i64>`, `Option<f64>`, `Option<str>`, `Option<bool>`.
 
-### Lambdas & Functional Methods
-```alpha
-let doubled = nums.map(fn(x: i64) -> i64 { return x * 2 })
-let evens = nums.filter(fn(x: i64) -> bool { return x % 2 == 0 })
-let sum = nums.reduce(0, fn(a: i64, b: i64) -> i64 { return a + b })
-let has_big = nums.any(fn(x: i64) -> bool { return x > 100 })
-let all_pos = nums.all(fn(x: i64) -> bool { return x > 0 })
-let n = nums.count(fn(x: i64) -> bool { return x > 5 })
+let s = Shape::Circle(5.0)
+match s {
+    Shape::Circle(r) => { println(format("radius: {}", r)) }
+    Shape::Rectangle(w, h) => { println(format("{}x{}", w, h)) }
+    Shape::Point => { println("point") }
+}
 ```
-Lambdas are `fn(params) -> ret { body }`. They capture variables from the enclosing scope:
-```alpha
-let threshold = 5
-let big = nums.filter(fn(x: i64) -> bool { return x > threshold })
-```
-Note: chaining across lines (`.filter().map()`) requires each call on the same line or intermediate variables.
 
-### Format Strings
-```alpha
-let msg = format("hello {}, age {}", name, age)
-println(format("{} items at {} each", count, price))
-```
-`{}` auto-detects type (i64, f64, str, bool).
+## Generics
 
-### Generics
 ```alpha
 fn first<T>(arr: [T]) -> T {
     return arr[0]
@@ -196,33 +113,141 @@ fn contains<T>(arr: [T], target: T) -> bool {
     return false
 }
 
-let x = first([1, 2, 3])         # T inferred as i64
-let s = first(["a", "b"])        # T inferred as str
-let found = contains(nums, 42)   # T inferred from args
+let x = first([1, 2, 3])      # T inferred as i64
+let s = first(["a", "b"])     # T inferred as str
 ```
-Monomorphization: generates specialized C functions (`first_i64`, `first_str`) at compile time. Zero runtime overhead.
 
-### Imports
+Monomorphization — generates specialized C functions at compile time. Zero runtime overhead.
+
+## Dynamic Arrays
+
 ```alpha
-import "math_lib.alpha"   # includes all fn/struct/enum from file
+let mut nums: [i64] = []
+nums.push(10)
+nums[0]                        # index
+nums.len                       # length
+nums.pop()                     # remove last
+nums.clear()                   # empty
+nums.clone()                   # copy
+
+let names = ["Alice", "Bob"]   # array literal
+
+# Functional methods
+nums.map(fn(x: i64) -> i64 { return x * 2 })
+nums.filter(fn(x: i64) -> bool { return x > 5 })
+nums.reduce(0, fn(a: i64, b: i64) -> i64 { return a + b })
+nums.any(fn(x: i64) -> bool { return x > 100 })
+nums.all(fn(x: i64) -> bool { return x > 0 })
+nums.count(fn(x: i64) -> bool { return x > 5 })
 ```
-Imported file's `main()` and `test` blocks are excluded.
 
-### Testing
+## Closures (Lambdas with Captures)
+
 ```alpha
-test "math works" {
-    assert(2 + 2 == 4)
-    assert(fibonacci(10) == 55)
-    assert("hello".len == 5)
+let threshold = 5
+let big = nums.filter(fn(x: i64) -> bool { return x > threshold })
+```
+
+Lambdas capture variables from the enclosing scope.
+
+## Strings
+
+```alpha
+s.len                          # length
+s.contains("x")               # bool
+s.starts_with("x")            # bool
+s.substr(0, 5)                 # substring
+s.char_at(0)                   # ASCII code (i64)
+s.split(",")                   # [str]
+s.trim()                       # strip whitespace
+s.replace("old", "new")       # replace all
+"a" + "b"                      # concatenation
+s == "hello"                   # comparison
+["a", "b"].join(", ")         # "a, b"
+
+# Multi-line strings
+let html = """<html>
+  <body>Hello</body>
+</html>"""
+
+# String escapes: \n \t \r \\ \" \0
+```
+
+## Hash Maps
+
+```alpha
+let mut m: Map<str> = map_new()
+m.set("key", "value")
+m.get("key", "default")       # value or default
+m.has("key")                   # bool
+m.delete("key")
+m.len                          # entry count
+m.keys()                       # [str]
+
+for key in m.keys() {
+    println(format("{} = {}", key, m.get(key, "")))
 }
 ```
-`assert()` decomposes comparisons automatically and shows both values on failure.
 
-### Contracts
+## Format Strings
+
+```alpha
+format("hello {}, age {}", name, age)
+```
+
+`{}` auto-detects type (i64, f64, str, bool).
+
+## Pipe Operator
+
+```alpha
+let result = 5 |> double |> add_one |> to_string
+```
+
+`x |> f` becomes `f(x)`. Chains left-to-right.
+
+## Option Type
+
+```alpha
+fn find(arr: [str], target: str) -> Option<str> {
+    for item in arr {
+        if item == target { return some(item) }
+    }
+    return none
+}
+
+result.is_some()               # bool
+result.is_none()               # bool
+result.unwrap()                # value or crash
+result.unwrap_or("default")   # value or default
+```
+
+## Result Type & ? Operator
+
+```alpha
+fn parse(s: str) -> Result<i64> {
+    if s.len == 0 { return err("empty") }
+    return ok(str_to_i64(s))
+}
+
+fn process(s: str) -> Result<i64> {
+    let n = parse(s)?          # unwraps Ok or early-returns Err
+    return ok(n * 2)
+}
+
+result.is_ok()                 # bool
+result.is_err()                # bool
+result.unwrap()                # value or crash
+result.unwrap_or(0)            # value or default
+result.error()                 # error message
+```
+
+## Contracts
+
 ```alpha
 fn clamp(val: i64, lo: i64, hi: i64) -> i64
     example clamp(5, 0, 10) == 5
     example clamp(-1, 0, 10) == 0
+    panics clamp(5, 10, 0)
     requires lo <= hi
     ensures result >= lo
     ensures result <= hi
@@ -232,135 +257,123 @@ fn clamp(val: i64, lo: i64, hi: i64) -> i64
     return val
 }
 ```
-- `example` — verified by `alphac test`, stripped in normal builds
-- `panics` — anti-example, verifies that bad inputs cause a crash
-- `requires` — checked at function entry, prints args on violation
-- `ensures` — checked at every return, `result` refers to return value
-- `recover { return none }` — catch panics, convert to return value
 
-### Recover (Crash Handler)
+- `example` — verified by `alphac test`, stripped in production
+- `panics` — anti-example, verifies bad inputs crash
+- `requires` — precondition, prints args on violation
+- `ensures` — postcondition, `result` = return value
+
+## Recover (Crash Handler)
+
 ```alpha
-fn safe_parse(input: str) -> Option<i64>
-    recover { return none }        # catches any panic in the body
+fn safe_parse(s: str) -> Option<i64>
+    recover { return none }
 {
-    // if anything panics here, recover block runs instead
-    return some(str_to_i64(input))
+    return some(str_to_i64(s))
 }
 ```
-Uses setjmp/longjmp. Catches `requires` violations, `panic()` calls, and `unwrap()` on none.
 
-### Panics (Anti-examples)
+Catches `requires` violations, `panic()`, and `unwrap()` on none/err.
+
+## Testing
+
 ```alpha
-fn divide(a: i64, b: i64) -> i64
-    requires b != 0
-    example divide(10, 2) == 5     # must succeed
-    panics divide(10, 0)           # must crash
-{
-    return a / b
+test "math" {
+    assert(2 + 2 == 4)
+    assert(fibonacci(10) == 55)
 }
 ```
-`panics` clauses verify that bad inputs trigger contract violations. Tested by `alphac test`.
 
-### Built-in Functions
+Smart `assert()` — decomposes comparisons, shows both values on failure:
+```
+FAIL  test.alpha:5: assert(fibonacci(10) == 55)
+       left:  54
+       right: 55
+```
+
+## Automatic Memory Management
+
+Arrays and maps freed automatically when they leave scope. Return values are moved, not freed.
+
+```alpha
+fn process() -> [i64] {
+    let mut temp: [i64] = []   # auto-freed on return
+    let mut result: [i64] = []
+    // ...
+    return result              # moved to caller
+}
+```
+
+## Imports
+
+```alpha
+import "math_lib.alpha"        # relative path
+import "/absolute/path.alpha"  # absolute path
+```
+
+Excludes `main()` and `test` blocks from imported files.
+
+## Type Casting
+
+```alpha
+as_f64(42)       # i64 -> f64
+as_i64(3.14)     # f64 -> i64 (truncates)
+as_u8(256)       # wraps to 0
+as_bool(1)       # -> true
+```
+
+## Built-in Functions
+
 ```alpha
 # I/O
-print(x)              println(x)           eprintln(x)
-file_read("path")     file_write("path", data)
+print(x)   println(x)   eprintln(x)
+file_read(path)   file_write(path, data)
 
-# String ops
-len(s)                str_concat(a, b)     str_substr(s, start, len)
-str_char_at(s, i)     str_contains(s, p)   str_starts_with(s, p)
-char_to_str(65)       i64_to_str(42)       str_to_i64("42")
-format("hi {}", x)
+# Strings
+len(s)   format("hi {}", x)   char_to_str(65)
+i64_to_str(42)   str_to_i64("42")
 
 # Math
 sqrt(x)
 
 # System
-args_count()          args_get(i)          run_command("cmd")
-exit(code)            assert(expr)          panic("message")
-free(ptr)             env_get("NAME")
+args_count()   args_get(i)   run_command(cmd)
+exit(code)   panic(msg)   env_get(name)
 
-# Casting
-as_i64(x)            as_f64(x)            as_u8(x)             as_bool(x)
-
-# Memory (automatic — arrays/maps freed when out of scope)
-panic("message")      # explicit crash, catchable by recover
+# Type casting
+as_i64(x)   as_f64(x)   as_u8(x)   as_bool(x)
 ```
 
-### Type Casting
-```alpha
-let f = as_f64(42)        # i64 -> f64
-let i = as_i64(3.14)      # f64 -> i64 (truncates)
-let b = as_u8(256)         # wraps to 0
+## Operators
+
 ```
-
-### Automatic Memory Management
-Arrays and maps are automatically freed when they go out of scope. No manual free, no annotations needed.
-```alpha
-fn process() -> [i64] {
-    let mut result: [i64] = []
-    let mut temp: [i64] = []    # auto-freed when function returns
-    for i in 0..10 {
-        temp.push(i)
-        result.push(i * i)
-    }
-    return result               # result is moved to caller, temp is freed
-}
-```
-
-### Defer (Non-memory cleanup)
-```alpha
-fn read_data() {
-    let f = file_open("data.txt")
-    defer file_close(f)         # runs when function exits
-    // ...
-}
-```
-
-### Operators
-```
-+  -  *  /  %              # arithmetic (+ also concatenates strings)
-== != < > <= >=            # comparison (== on strings uses strcmp)
-and or not                 # logical
-= += -= *= /=             # assignment
-& &mut *                  # reference/dereference
-..                         # range (0..10)
-```
-
-### Standard Library
-```alpha
-import "/path/to/alpha/std.alpha"
-
-# Math: abs_val, min, max, clamp, min_f64, max_f64, abs_f64
-# Strings: str_repeat, str_pad_left, str_pad_right, str_to_upper, str_to_lower
-#           str_is_digit, str_is_alpha, str_is_space
-# Arrays: range(start, end), sum(arr), sum_f64(arr)
-# System: env_get(name), free(ptr)
-```
-
-### String Escapes
-`\n` (newline), `\t` (tab), `\r` (carriage return), `\\` (backslash), `\"` (quote), `\0` (null)
-
-### Key behaviors
-- Newlines terminate statements (no semicolons)
-- Lines ending with an operator continue to the next line
-- Newlines suppressed inside `()` and `[]`
-- `//` for comments
-- Variables prefixed with `_` suppress unused warnings
-
-## Project Structure
-```
-bootstrap/src/    # C compiler: lexer, parser, checker, codegen
-alpha/            # Self-hosted compiler (alpha.alpha)
-examples/         # Example programs and tests
++  -  *  /  %         # arithmetic (+ concatenates strings)
+== != < > <= >=       # comparison (== on strings uses strcmp)
+and  or  not          # logical
+= += -= *= /=        # assignment
+..                    # range (0..10)
+|>                    # pipe (x |> f becomes f(x))
+?                     # try (unwrap Result/Option or early-return)
 ```
 
 ## Compiler Diagnostics
-The compiler catches and reports with source context:
-- Unknown variables/functions (with "did you mean?" suggestions)
-- Wrong argument counts
-- Assignment to immutable variables
-- break/continue outside loops
-- Unused variables (warning)
-- Missing returns (warning)
+
+Colored errors with source context, typo suggestions, multiple errors per pass:
+
+```
+error: unknown variable 'reuslt'
+  --> math.alpha:3:12
+   |
+ 3 |     return reuslt
+   |            ^^^^^^ did you mean 'result'?
+```
+
+Catches: unknown variables/functions, wrong argument counts, immutable assignment, break outside loops. Warns: unused variables, missing returns.
+
+## Project Structure
+
+```
+bootstrap/src/    # C compiler (lexer, parser, checker, codegen, types, error)
+alpha/            # Self-hosted compiler + standard library
+examples/         # Example programs and tests
+```

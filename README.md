@@ -7,20 +7,17 @@ Alpha compiles to C, then to native binaries. It's fast, safe, and self-hosting.
 ## Quick Start
 
 ```bash
-# Build the compiler
-cd bootstrap && make
-
-# Compile and run a program
+git clone https://github.com/AxelKrantz/Alpha.git
+cd Alpha/bootstrap
+make
 ./alphac ../examples/hello.alpha -o hello && ./hello
 ```
 
-## What makes Alpha different
+## What Makes Alpha Different
 
 **Built for AI agents.** Every design decision optimizes for the AI coding workflow: write code, get structured feedback, fix, repeat.
 
-### Contracts are the spec
-
-Functions carry their own specification. No separate test files.
+### The spec is the function
 
 ```alpha
 fn fibonacci(n: i64) -> i64
@@ -35,14 +32,9 @@ fn fibonacci(n: i64) -> i64
 }
 ```
 
-- `example` — executable spec, verified by `alphac test`, stripped in production
-- `requires` — precondition, checked at runtime with argument values on failure
-- `ensures` — postcondition, checked on every return path
-- `panics` — anti-example, verifies bad inputs are rejected
+Contracts live on the function — no separate test files. `alphac test` verifies examples, `panics` anti-examples prove bad inputs are rejected.
 
-### Smart diagnostics
-
-Errors show source context with suggestions:
+### Errors that help you fix things
 
 ```
 error: unknown variable 'reuslt'
@@ -52,63 +44,42 @@ error: unknown variable 'reuslt'
    |            ^^^^^^ did you mean 'result'?
 ```
 
-Multiple errors in a single pass. Catches: undefined variables/functions, wrong argument counts, immutable assignment, break outside loops, unused variables.
+Multiple errors per pass. Shows source lines, carets, suggestions.
 
-### Smart assert
-
-One function that handles everything:
+### Error propagation with `?`
 
 ```alpha
-test "math" {
-    assert(fibonacci(10) == 55)
+fn load_config(path: str) -> Result<str> {
+    if path.len == 0 { return err("empty path") }
+    return ok(file_read(path))
 }
-```
 
-On failure, automatically decomposes the expression and shows both values:
-
-```
-  FAIL  tests.alpha:15: assert(fibonacci(10) == 55)
-         left:  54
-         right: 55
-```
-
-JSON output for programmatic consumption:
-
-```bash
-alphac test file.alpha --json
-```
-
-```json
-{"tests": [{"name": "math", "status": "fail", "failures": [
-  {"line": 15, "expr": "fibonacci(10) == 55", "left": 54, "right": 55}
-]}]}
+fn process() -> Result<i64> {
+    let config = load_config("app.conf")?  // propagates error automatically
+    return ok(config.len)
+}
 ```
 
 ### Automatic memory management
 
-Arrays and maps are freed when they go out of scope. No manual memory management, no garbage collector pauses.
+Arrays and maps are freed when they leave scope. No manual free, no garbage collector.
 
 ```alpha
-fn process() -> [i64] {
+fn compute() -> [i64] {
+    let mut temp: [i64] = []   // auto-freed on return
     let mut result: [i64] = []
-    let mut temp: [i64] = []    // auto-freed when function returns
-    for i in 0..10 {
-        temp.push(i * i)
-        result.push(i)
-    }
-    return result               // moved to caller, not freed
+    for i in 0..100 { result.push(i * i) }
+    return result              // moved to caller, not freed
 }
 ```
 
 ### Recover from crashes
 
-Functions can catch panics and convert them to return values:
-
 ```alpha
-fn safe_parse(input: str) -> Option<i64>
+fn safe_parse(s: str) -> Option<i64>
     recover { return none }
 {
-    return some(str_to_i64(input))
+    return some(str_to_i64(s))  // if this panics, recover catches it
 }
 ```
 
@@ -116,90 +87,125 @@ fn safe_parse(input: str) -> Option<i64>
 
 | Category | Features |
 |----------|----------|
-| **Types** | `i64` `f64` `bool` `str` `[T]` `Map<T>` `Option<T>` structs enums |
-| **Control** | if/else, while, for-in (arrays + ranges), match, break/continue |
-| **Functions** | lambdas, contracts, methods via impl blocks |
+| **Types** | `i64` `f64` `bool` `str` `[T]` `Map<T>` `Option<T>` `Result<T>` structs enums |
+| **Generics** | `fn first<T>(arr: [T]) -> T` with monomorphization |
+| **Traits** | `trait Display { fn to_string(&self) -> str }` |
+| **Enums** | Data variants: `enum Shape { Circle(f64), Rectangle(f64, f64) }` |
+| **Pattern matching** | Destructuring: `Shape::Circle(r) => { use r }` |
+| **Closures** | Variable capture: `nums.filter(fn(x: i64) -> bool { return x > threshold })` |
 | **Arrays** | push, pop, map, filter, reduce, any, all, count, join, clone |
-| **Strings** | split, join, trim, replace, contains, starts_with, substr, format |
-| **Maps** | set, get, has, delete, keys, iteration |
-| **Errors** | `Option<T>` with some/none/unwrap/unwrap_or, panic, recover |
-| **Memory** | Automatic scope-based cleanup, defer for non-memory resources |
-| **Testing** | Inline tests, smart assert, contracts, JSON output |
-| **Tooling** | Watch mode, colored errors, typo suggestions, imports |
+| **Strings** | split, join, trim, replace, contains, starts_with, multi-line `"""..."""` |
+| **Maps** | `Map<T>` with set, get, has, delete, keys |
+| **Errors** | `Option<T>`, `Result<T>` with `?` operator, panic, recover |
+| **Contracts** | example, panics, requires, ensures on functions |
+| **Memory** | Automatic scope-based cleanup for arrays and maps |
+| **Testing** | Smart `assert()` with expression decomposition, JSON output |
+| **Tooling** | Watch mode, colored diagnostics, typo suggestions, imports |
+| **Pipe** | `x \|> f \|> g` chains function calls left-to-right |
+| **Format** | `format("hello {}, age {}", name, age)` with type auto-detection |
 
 ## Examples
 
-### Hello World
-
-```alpha
-fn main() {
-    println("Hello, Alpha!")
-}
-```
-
-### Functional Array Operations
+### Functional Programming
 
 ```alpha
 fn main() {
     let nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
-    let evens = nums.filter(fn(x: i64) -> bool { return x % 2 == 0 })
-    let squared = evens.map(fn(x: i64) -> i64 { return x * x })
-    let sum = squared.reduce(0, fn(a: i64, b: i64) -> i64 { return a + b })
+    let threshold = 5
+    let result = nums
+        .filter(fn(x: i64) -> bool { return x > threshold })
+        .map(fn(x: i64) -> i64 { return x * x })
+        .reduce(0, fn(a: i64, b: i64) -> i64 { return a + b })
 
-    println(format("Sum of squares of evens: {}", sum))
+    println(format("Sum of squares above {}: {}", threshold, result))
 }
 ```
 
-### Structs and Methods
+### Structs, Traits, Generics
 
 ```alpha
-struct Vec2 {
-    x: f64
-    y: f64
+trait Display {
+    fn to_string(&self) -> str
 }
 
-impl Vec2 {
-    fn length(&self) -> f64 {
-        return sqrt(self.x * self.x + self.y * self.y)
-    }
+struct Point { x: f64, y: f64 }
 
-    fn add(&self, other: Vec2) -> Vec2 {
-        return Vec2 { x: self.x + other.x, y: self.y + other.y }
+impl Display for Point {
+    fn to_string(&self) -> str {
+        return format("({}, {})", self.x, self.y)
+    }
+}
+
+fn print_all<T>(items: [T]) {
+    for item in items {
+        println(item.to_string())
     }
 }
 
 fn main() {
-    let a = Vec2 { x: 3.0, y: 4.0 }
-    println(format("length: {}", a.length()))
+    print_all([Point { x: 1.0, y: 2.0 }, Point { x: 3.0, y: 4.0 }])
+}
+```
+
+### Enums with Pattern Matching
+
+```alpha
+enum Shape {
+    Circle(f64)
+    Rectangle(f64, f64)
+    Point
+}
+
+fn area(s: Shape) -> f64 {
+    match s {
+        Shape::Circle(r) => { return 3.14159 * r * r }
+        Shape::Rectangle(w, h) => { return w * h }
+        Shape::Point => { return 0.0 }
+    }
+    return 0.0
+}
+
+fn main() {
+    let shapes = [Shape::Circle(5.0), Shape::Rectangle(3.0, 4.0)]
+    for s in shapes {
+        println(format("area: {}", area(s)))
+    }
 }
 ```
 
 ### Error Handling
 
 ```alpha
-fn find(names: [str], target: str) -> Option<str> {
-    for name in names {
-        if name == target { return some(name) }
+fn parse_number(s: str) -> Result<i64> {
+    for i in 0..s.len {
+        let c = s.char_at(i)
+        if c < 48 or c > 57 { return err("not a number: " + s) }
     }
-    return none
+    return ok(str_to_i64(s))
+}
+
+fn sum_all(inputs: [str]) -> Result<i64> {
+    let mut total: i64 = 0
+    for input in inputs {
+        let n = parse_number(input)?   // ? propagates errors
+        total += n
+    }
+    return ok(total)
 }
 
 fn main() {
-    let names = ["Alice", "Bob", "Charlie"]
-    let result = find(names, "Bob")
-    println(format("Found: {}", result.unwrap_or("nobody")))
+    let r = sum_all(["10", "20", "30"])
+    println(format("sum: {}", r.unwrap()))
+
+    let bad = sum_all(["10", "abc", "30"])
+    println(format("error: {}", bad.error()))
 }
 ```
 
 ### JSON Parser
 
-Alpha includes a full JSON parser in `examples/json.alpha` — parses, accesses nested values, and pretty-prints. ~300 lines.
-
-```alpha
-let root = json_parse("{\"name\": \"Alpha\", \"version\": 1.0}")
-println(json_str(json_get(root, "name")))
-```
+Alpha includes a full JSON parser in `examples/json.alpha` — parses nested objects/arrays, pretty-prints, with inline tests.
 
 ## CLI
 
@@ -211,36 +217,24 @@ alphac watch file.alpha         # recompile on save
 alphac --emit-c file.alpha      # show generated C
 ```
 
-## Building from Source
-
-Requires a C compiler (cc/gcc/clang).
-
-```bash
-git clone https://github.com/axelkrantz/Alpha.git
-cd Alpha/bootstrap
-make
-make test
-```
-
 ## Self-Hosting
 
 Alpha is self-hosting — the compiler can compile itself:
 
 ```bash
-./alphac ../alpha/alpha.alpha -o alphac-self    # compile the compiler with itself
-./alphac-self examples/hello.alpha -o hello     # use the self-compiled compiler
+./alphac ../alpha/alpha.alpha -o alphac-self
+./alphac-self ../examples/hello.alpha -o hello && ./hello
 ```
 
 ## Project Structure
 
 ```
-bootstrap/     Stage 0 compiler (C) — lexer, parser, type checker, codegen
-alpha/         Stage 1 compiler (Alpha) — self-hosting single-pass transpiler
-alpha/std.alpha Standard library
-examples/      Example programs and tests
-CLAUDE.md      Language reference for AI assistants
+bootstrap/      Stage 0 compiler (C) — lexer, parser, type checker, codegen
+alpha/          Stage 1 compiler (Alpha) + standard library
+examples/       Example programs, tests, and JSON parser
+CLAUDE.md       Complete language reference for AI assistants
 ```
 
 ## License
 
-MIT
+MIT — if you make a boatload of money off this, cut me in would ya?
