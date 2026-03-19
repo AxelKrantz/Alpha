@@ -1016,13 +1016,39 @@ static ASTNode *parse_impl_block(Parser *p) {
     int col = p->previous.column;
 
     parser_expect(p, TOK_IDENT);
-    char *type_name = token_to_str(&p->previous);
+    char *first_name = token_to_str(&p->previous);
+
+    // Check for "impl Trait for Type"
+    if (parser_match(p, TOK_FOR)) {
+        parser_expect(p, TOK_IDENT);
+        char *type_name = token_to_str(&p->previous);
+
+        parser_expect(p, TOK_LBRACE);
+        skip_newlines(p);
+
+        ASTNode *node = ast_new(NODE_IMPL_TRAIT, line, col);
+        node->impl_trait.trait_name = first_name;
+        node->impl_trait.type_name = type_name;
+        node_list_init(&node->impl_trait.methods);
+
+        while (!parser_check(p, TOK_RBRACE) && !parser_check(p, TOK_EOF)) {
+            skip_newlines(p);
+            bool is_pub = parser_match(p, TOK_PUB);
+            parser_expect(p, TOK_FN);
+            ASTNode *method = parse_fn_decl(p, is_pub);
+            method->fn_decl.is_method = true;
+            node_list_push(&node->impl_trait.methods, method);
+            skip_newlines(p);
+        }
+        parser_expect(p, TOK_RBRACE);
+        return node;
+    }
 
     parser_expect(p, TOK_LBRACE);
     skip_newlines(p);
 
     ASTNode *node = ast_new(NODE_IMPL_BLOCK, line, col);
-    node->impl_block.type_name = type_name;
+    node->impl_block.type_name = first_name;
     node_list_init(&node->impl_block.methods);
 
     while (!parser_check(p, TOK_RBRACE) && !parser_check(p, TOK_EOF)) {
@@ -1049,6 +1075,46 @@ static ASTNode *parse_declaration(Parser *p) {
     if (parser_match(p, TOK_FN)) return parse_fn_decl(p, is_pub);
     if (parser_match(p, TOK_STRUCT)) return parse_struct_decl(p, is_pub);
     if (parser_match(p, TOK_ENUM)) return parse_enum_decl(p, is_pub);
+    if (parser_match(p, TOK_TRAIT)) {
+        int tline = p->previous.line;
+        int tcol = p->previous.column;
+        parser_expect(p, TOK_IDENT);
+        char *tname = token_to_str(&p->previous);
+        parser_expect(p, TOK_LBRACE);
+        skip_newlines(p);
+
+        ASTNode *tnode = ast_new(NODE_TRAIT_DECL, tline, tcol);
+        tnode->trait_decl.name = tname;
+        node_list_init(&tnode->trait_decl.methods);
+
+        while (!parser_check(p, TOK_RBRACE) && !parser_check(p, TOK_EOF)) {
+            skip_newlines(p);
+            if (parser_check(p, TOK_RBRACE)) break;
+            parser_expect(p, TOK_FN);
+            parser_expect(p, TOK_IDENT);
+            char *mname = token_to_str(&p->previous);
+            int mline = p->previous.line;
+            int mcol = p->previous.column;
+            FieldList mparams = parse_params(p);
+            ASTNode *mret = NULL;
+            if (parser_match(p, TOK_ARROW)) mret = parse_type(p);
+
+            ASTNode *sig = ast_new(NODE_FN_DECL, mline, mcol);
+            sig->fn_decl.name = mname;
+            sig->fn_decl.params = mparams;
+            sig->fn_decl.return_type = mret;
+            sig->fn_decl.body = NULL;
+            node_list_init(&sig->fn_decl.type_params);
+            node_list_init(&sig->fn_decl.examples);
+            node_list_init(&sig->fn_decl.panics);
+            node_list_init(&sig->fn_decl.requires);
+            node_list_init(&sig->fn_decl.ensures);
+            node_list_push(&tnode->trait_decl.methods, sig);
+            skip_newlines(p);
+        }
+        parser_expect(p, TOK_RBRACE);
+        return tnode;
+    }
     if (parser_match(p, TOK_LET)) return parse_let(p); // global variable
     if (parser_match(p, TOK_IMPL)) {
         if (is_pub) {

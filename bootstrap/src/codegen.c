@@ -2123,6 +2123,21 @@ static void emit_decl(CodeGen *gen, ASTNode *node) {
             break;
         }
 
+        case NODE_TRAIT_DECL:
+            // Traits are just declarations — no C output needed
+            break;
+
+        case NODE_IMPL_TRAIT: {
+            // impl Trait for Type — emit methods as Type_method with trait prefix
+            const char *saved = gen->current_struct;
+            gen->current_struct = node->impl_trait.type_name;
+            for (int i = 0; i < node->impl_trait.methods.count; i++) {
+                emit_fn_decl(gen, node->impl_trait.methods.items[i]);
+            }
+            gen->current_struct = saved;
+            break;
+        }
+
         default:
             fprintf(gen->out, "/* unhandled declaration */\n");
             break;
@@ -2596,7 +2611,7 @@ void codegen_emit(CodeGen *gen, ASTNode *program) {
         gen->out = fopen("/dev/null", "w");
         for (int i = 0; i < program->program.decls.count; i++) {
             ASTNode *decl = program->program.decls.items[i];
-            if (decl->type == NODE_FN_DECL || decl->type == NODE_IMPL_BLOCK) {
+            if (decl->type == NODE_FN_DECL || decl->type == NODE_IMPL_BLOCK || decl->type == NODE_IMPL_TRAIT) {
                 emit_decl(gen, decl);
             }
         }
@@ -2729,7 +2744,7 @@ void codegen_emit(CodeGen *gen, ASTNode *program) {
             strcmp(decl->fn_decl.name, "main") == 0) {
             continue;
         }
-        if (decl->type == NODE_FN_DECL || decl->type == NODE_IMPL_BLOCK) {
+        if (decl->type == NODE_FN_DECL || decl->type == NODE_IMPL_BLOCK || decl->type == NODE_IMPL_TRAIT) {
             emit_decl(gen, decl);
         }
     }

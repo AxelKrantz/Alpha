@@ -212,8 +212,12 @@ static ASTNode *find_method(Checker *c, const char *struct_name, const char *met
     for (int i = 0; i < c->impl_count; i++) {
         if (strcmp(c->impls[i].struct_name, struct_name) != 0) continue;
         ASTNode *impl = c->impls[i].impl_node;
-        for (int j = 0; j < impl->impl_block.methods.count; j++) {
-            ASTNode *m = impl->impl_block.methods.items[j];
+        // Handle both NODE_IMPL_BLOCK and NODE_IMPL_TRAIT
+        NodeList *methods;
+        if (impl->type == NODE_IMPL_TRAIT) methods = &impl->impl_trait.methods;
+        else methods = &impl->impl_block.methods;
+        for (int j = 0; j < methods->count; j++) {
+            ASTNode *m = methods->items[j];
             if (strcmp(m->fn_decl.name, method_name) == 0) {
                 return m;
             }
@@ -1197,6 +1201,35 @@ static void register_decl(Checker *c, ASTNode *node) {
             break;
         }
 
+        case NODE_IMPL_TRAIT: {
+            // impl Trait for Type — register methods same as impl block
+            register_impl(c, node->impl_trait.type_name, node);
+            for (int i = 0; i < node->impl_trait.methods.count; i++) {
+                ASTNode *method = node->impl_trait.methods.items[i];
+                char mangled[256];
+                snprintf(mangled, sizeof(mangled), "%s_%s",
+                    node->impl_trait.type_name, method->fn_decl.name);
+
+                int param_count = method->fn_decl.params.count;
+                Type **params = calloc(param_count, sizeof(Type *));
+                for (int j = 0; j < param_count; j++) {
+                    if (strcmp(method->fn_decl.params.items[j].name, "self") == 0) {
+                        params[j] = type_resolve_name(&c->types, node->impl_trait.type_name);
+                    } else if (method->fn_decl.params.items[j].type) {
+                        params[j] = resolve_type_node(c, method->fn_decl.params.items[j].type);
+                    } else {
+                        params[j] = c->types.t_unknown;
+                    }
+                }
+                Type *ret = method->fn_decl.return_type
+                    ? resolve_type_node(c, method->fn_decl.return_type)
+                    : c->types.t_void;
+                Type *fn_type = type_new_fn(&c->types, params, param_count, ret);
+                scope_define(&c->types, mangled, fn_type, false);
+            }
+            break;
+        }
+
         case NODE_LET_STMT: {
             // Global variable
             Type *declared = NULL;
@@ -1321,6 +1354,11 @@ void checker_check(Checker *c, ASTNode *program) {
             for (int j = 0; j < decl->impl_block.methods.count; j++) {
                 check_fn_body(c, decl->impl_block.methods.items[j],
                     decl->impl_block.type_name);
+            }
+        } else if (decl->type == NODE_IMPL_TRAIT) {
+            for (int j = 0; j < decl->impl_trait.methods.count; j++) {
+                check_fn_body(c, decl->impl_trait.methods.items[j],
+                    decl->impl_trait.type_name);
             }
         } else if (decl->type == NODE_TEST_DECL) {
             check_block(c, decl->test_decl.body);

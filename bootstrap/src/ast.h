@@ -15,6 +15,8 @@ typedef enum {
     NODE_STRUCT_DECL,
     NODE_ENUM_DECL,
     NODE_IMPL_BLOCK,
+    NODE_TRAIT_DECL,
+    NODE_IMPL_TRAIT,
     NODE_TEST_DECL,
     NODE_IMPORT,
 
@@ -134,6 +136,19 @@ struct ASTNode {
             char *type_name;
             NodeList methods;
         } impl_block;
+
+        // NODE_TRAIT_DECL
+        struct {
+            char *name;
+            NodeList methods; // fn signatures (NODE_FN_DECL without bodies)
+        } trait_decl;
+
+        // NODE_IMPL_TRAIT: impl Trait for Type { methods }
+        struct {
+            char *trait_name;
+            char *type_name;
+            NodeList methods;
+        } impl_trait;
 
         // NODE_TEST_DECL
         struct {
