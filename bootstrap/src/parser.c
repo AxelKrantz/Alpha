@@ -501,6 +501,37 @@ static ASTNode *parse_or(Parser *p) {
 static ASTNode *parse_expression(Parser *p) {
     ASTNode *left = parse_or(p);
 
+    // Pipe operator: expr |> fn becomes fn(expr)
+    while (parser_match(p, TOK_PIPE_ARROW)) {
+        int line = p->previous.line;
+        int col = p->previous.column;
+        ASTNode *right = parse_or(p);
+        // Transform: left |> right into right(left)
+        // If right is a call expr like f(a), make it f(a, left) — wait, simpler:
+        // left |> f becomes f(left)
+        if (right->type == NODE_IDENT) {
+            ASTNode *call = ast_new(NODE_CALL_EXPR, line, col);
+            call->call.callee = right;
+            node_list_init(&call->call.args);
+            call->call.mono_name = NULL;
+            node_list_push(&call->call.args, left);
+            left = call;
+        } else if (right->type == NODE_CALL_EXPR) {
+            // left |> f(a, b) becomes f(left, a, b)
+            // Prepend left to args
+            NodeList new_args;
+            node_list_init(&new_args);
+            node_list_push(&new_args, left);
+            for (int i = 0; i < right->call.args.count; i++) {
+                node_list_push(&new_args, right->call.args.items[i]);
+            }
+            right->call.args = new_args;
+            left = right;
+        } else {
+            left = right; // fallback
+        }
+    }
+
     // Range operator: expr..expr
     if (parser_check(p, TOK_DOTDOT)) {
         int line = p->current.line;

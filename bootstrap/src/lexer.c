@@ -242,7 +242,7 @@ static Token lexer_next_raw(Lexer *lexer) {
             case TOK_PERCENT: case TOK_ASSIGN: case TOK_EQ: case TOK_NEQ:
             case TOK_LT: case TOK_GT: case TOK_LEQ: case TOK_GEQ:
             case TOK_AND: case TOK_OR: case TOK_COMMA: case TOK_DOT:
-            case TOK_AMP: case TOK_PIPE: case TOK_ARROW: case TOK_FAT_ARROW:
+            case TOK_AMP: case TOK_PIPE: case TOK_PIPE_ARROW: case TOK_ARROW: case TOK_FAT_ARROW:
             case TOK_PLUS_ASSIGN: case TOK_MINUS_ASSIGN:
             case TOK_STAR_ASSIGN: case TOK_SLASH_ASSIGN:
             case TOK_COLON:
@@ -271,8 +271,32 @@ static Token lexer_next_raw(Lexer *lexer) {
         return lex_number(lexer);
     }
 
-    // Strings
+    // Strings (including triple-quoted multi-line)
     if (c == '"') {
+        // Check for triple-quote """
+        if (peek(lexer) == '"' && peek_next(lexer) == '"') {
+            advance(lexer); advance(lexer); // consume the other two quotes
+            const char *content_start = lexer->current;
+            int sline = lexer->line;
+            int scol = lexer->column;
+            // Read until """
+            while (lexer->current[0] != '\0') {
+                if (lexer->current[0] == '"' && lexer->current[1] == '"' && lexer->current[2] == '"') {
+                    Token tok;
+                    tok.type = TOK_STRING_LIT;
+                    tok.start = content_start - 1; // -1 because parser does start+1
+                    tok.length = (int)(lexer->current - content_start) + 2; // +2 because parser does length-2
+                    tok.line = sline;
+                    tok.column = scol;
+                    tok.int_val = 0;
+                    advance(lexer); advance(lexer); advance(lexer); // consume closing """
+                    return tok;
+                }
+                if (*lexer->current == '\n') { lexer->line++; lexer->column = 0; }
+                advance(lexer);
+            }
+            return error_token(lexer, "unterminated triple-quoted string");
+        }
         return lex_string(lexer);
     }
 
@@ -313,6 +337,7 @@ static Token lexer_next_raw(Lexer *lexer) {
         case '&':
             return make_token(lexer, TOK_AMP, start, line, col);
         case '|':
+            if (match(lexer, '>')) return make_token(lexer, TOK_PIPE_ARROW, start, line, col);
             return make_token(lexer, TOK_PIPE, start, line, col);
         case '.':
             if (match(lexer, '.')) return make_token(lexer, TOK_DOTDOT, start, line, col);
@@ -416,6 +441,7 @@ const char *token_type_name(TokenType type) {
         case TOK_GEQ: return ">=";
         case TOK_AMP: return "&";
         case TOK_PIPE: return "|";
+        case TOK_PIPE_ARROW: return "|>";
         case TOK_ARROW: return "->";
         case TOK_FAT_ARROW: return "=>";
         case TOK_DOT: return ".";

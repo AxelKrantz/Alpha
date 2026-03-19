@@ -1088,6 +1088,17 @@ static void emit_expr(CodeGen *gen, ASTNode *node) {
             Type *obj_type = node->method_call.object->resolved_type;
             const char *method = node->method_call.method;
 
+            // Substitute type params in generic context
+            if (gen->subst_count > 0 && obj_type) {
+                if (obj_type->kind == TYPE_PARAM) {
+                    int idx = obj_type->param_info.index;
+                    if (idx >= 0 && idx < gen->subst_count) obj_type = gen->subst_concrete[idx];
+                } else if (obj_type->kind == TYPE_UNKNOWN) {
+                    // Try first substitution as fallback
+                    obj_type = gen->subst_concrete[0];
+                }
+            }
+
             // Array methods: push, pop, clear, clone, free
             if (obj_type && obj_type->kind == TYPE_ARRAY) {
                 const char *suffix = type_array_suffix(obj_type->array_info.element);
@@ -2167,17 +2178,27 @@ static void emit_forward_decls(CodeGen *gen, ASTNode *program) {
             fprintf(gen->out, ");\n");
         }
 
+        // Forward declare impl block and impl trait methods
+        NodeList *methods = NULL;
+        const char *impl_type = NULL;
         if (decl->type == NODE_IMPL_BLOCK) {
-            for (int m = 0; m < decl->impl_block.methods.count; m++) {
-                ASTNode *method = decl->impl_block.methods.items[m];
+            methods = &decl->impl_block.methods;
+            impl_type = decl->impl_block.type_name;
+        } else if (decl->type == NODE_IMPL_TRAIT) {
+            methods = &decl->impl_trait.methods;
+            impl_type = decl->impl_trait.type_name;
+        }
+        if (methods && impl_type) {
+            for (int m = 0; m < methods->count; m++) {
+                ASTNode *method = methods->items[m];
                 emit_type(gen, method->fn_decl.return_type);
-                fprintf(gen->out, " %s_%s(", decl->impl_block.type_name, method->fn_decl.name);
+                fprintf(gen->out, " %s_%s(", impl_type, method->fn_decl.name);
                 bool first = true;
                 for (int j = 0; j < method->fn_decl.params.count; j++) {
                     Field *param = &method->fn_decl.params.items[j];
                     if (!first) fprintf(gen->out, ", ");
                     if (strcmp(param->name, "self") == 0) {
-                        fprintf(gen->out, "%s* self", decl->impl_block.type_name);
+                        fprintf(gen->out, "%s* self", impl_type);
                     } else {
                         if (param->type) emit_type(gen, param->type);
                         else fprintf(gen->out, "int64_t");
