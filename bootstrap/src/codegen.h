@@ -8,6 +8,7 @@ typedef struct {
     FILE *out;
     int indent;
     const char *current_struct;
+    const char *test_filename;  // set for test mode
     bool test_mode;
     bool strip_contracts;
     // Contract tracking for ensures

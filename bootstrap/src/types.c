@@ -1,14 +1,8 @@
 #include "types.h"
+#include "ast.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static char *my_strdup(const char *s) {
-    int len = (int)strlen(s);
-    char *d = malloc(len + 1);
-    memcpy(d, s, len + 1);
-    return d;
-}
 
 void type_table_init(TypeTable *tt) {
     // Create built-in singletons
@@ -45,12 +39,9 @@ void type_table_init(TypeTable *tt) {
 Type *type_new(TypeTable *tt, TypeKind kind, const char *name) {
     Type *t = calloc(1, sizeof(Type));
     t->kind = kind;
-    if (name) t->name = my_strdup(name);
+    if (name) t->name = str_dup(name, strlen(name));
 
-    if (tt->user_type_count >= tt->user_type_cap) {
-        tt->user_type_cap = tt->user_type_cap == 0 ? 32 : tt->user_type_cap * 2;
-        tt->user_types = realloc(tt->user_types, sizeof(Type *) * tt->user_type_cap);
-    }
+    GROW_ARRAY(tt->user_types, tt->user_type_count, tt->user_type_cap, Type *);
     tt->user_types[tt->user_type_count++] = t;
     return t;
 }
@@ -126,12 +117,9 @@ void scope_define_at(TypeTable *tt, const char *name, Type *type, bool is_mut, i
     Scope *scope = tt->current_scope;
     if (!scope) return;
 
-    if (scope->count >= scope->capacity) {
-        scope->capacity = scope->capacity == 0 ? 16 : scope->capacity * 2;
-        scope->symbols = realloc(scope->symbols, sizeof(Symbol) * scope->capacity);
-    }
+    GROW_ARRAY(scope->symbols, scope->count, scope->capacity, Symbol);
     Symbol *sym = &scope->symbols[scope->count++];
-    sym->name = my_strdup(name);
+    sym->name = str_dup(name, strlen(name));
     sym->type = type;
     sym->is_mut = is_mut;
     sym->used = false;
@@ -247,7 +235,7 @@ const char *type_to_c(Type *t) {
             } else {
                 snprintf(arr_buf, sizeof(arr_buf), "AlphaArr_i64");
             }
-            return arr_buf;
+            return strdup(arr_buf);
         }
         case TYPE_REF:     return "void*";
         case TYPE_FN:      return "void*";
@@ -255,19 +243,19 @@ const char *type_to_c(Type *t) {
             static char opt_buf[128];
             const char *suffix = t->option_info.inner_type ? type_array_suffix(t->option_info.inner_type) : "i64";
             snprintf(opt_buf, sizeof(opt_buf), "AlphaOpt_%s", suffix);
-            return opt_buf;
+            return strdup(opt_buf);
         }
         case TYPE_MAP: {
             static char map_buf[128];
             const char *suffix = t->map_info.value_type ? type_array_suffix(t->map_info.value_type) : "i64";
             snprintf(map_buf, sizeof(map_buf), "AlphaMap_%s", suffix);
-            return map_buf;
+            return strdup(map_buf);
         }
         case TYPE_RESULT: {
             static char res_buf[128];
             const char *suffix = t->result_info.ok_type ? type_array_suffix(t->result_info.ok_type) : "i64";
             snprintf(res_buf, sizeof(res_buf), "AlphaResult_%s", suffix);
-            return res_buf;
+            return strdup(res_buf);
         }
         case TYPE_PARAM:   return "/* TYPE_PARAM */void";
         case TYPE_UNKNOWN: return "int64_t";
@@ -302,12 +290,9 @@ Type *type_new_param(TypeTable *tt, const char *name, int index) {
 // ---- Generics ----
 
 void register_generic_def(TypeTable *tt, const char *name, char **param_names, int param_count, void *ast_node, bool is_struct) {
-    if (tt->generic_def_count >= tt->generic_def_cap) {
-        tt->generic_def_cap = tt->generic_def_cap ? tt->generic_def_cap * 2 : 16;
-        tt->generic_defs = realloc(tt->generic_defs, sizeof(GenericDef) * tt->generic_def_cap);
-    }
+    GROW_ARRAY(tt->generic_defs, tt->generic_def_count, tt->generic_def_cap, GenericDef);
     GenericDef *def = &tt->generic_defs[tt->generic_def_count++];
-    def->name = my_strdup(name);
+    def->name = str_dup(name, strlen(name));
     def->type_param_names = param_names;
     def->type_param_count = param_count;
     def->ast_node = ast_node;
@@ -323,7 +308,6 @@ GenericDef *find_generic_def(TypeTable *tt, const char *name) {
 }
 
 static const char *type_mangle_suffix(Type *t) {
-    static char buf[128];
     if (!t) return "void";
     switch (t->kind) {
         case TYPE_I64: case TYPE_I32: case TYPE_I16: case TYPE_I8: return "i64";
@@ -333,12 +317,17 @@ static const char *type_mangle_suffix(Type *t) {
         case TYPE_STR: return "str";
         case TYPE_BOOL: return "bool";
         case TYPE_STRUCT: return t->name ? t->name : "struct";
-        case TYPE_ARRAY:
+        case TYPE_ENUM: return t->name ? t->name : "enum";
+        case TYPE_ARRAY: {
+            char buf[128];
             snprintf(buf, sizeof(buf), "arr_%s", type_mangle_suffix(t->array_info.element));
-            return buf;
-        case TYPE_OPTION:
+            return strdup(buf);
+        }
+        case TYPE_OPTION: {
+            char buf[128];
             snprintf(buf, sizeof(buf), "opt_%s", type_mangle_suffix(t->option_info.inner_type));
-            return buf;
+            return strdup(buf);
+        }
         default: return "unknown";
     }
 }
@@ -349,7 +338,7 @@ char *mangle_generic_name(const char *base, Type **types, int count) {
     for (int i = 0; i < count; i++) {
         pos += snprintf(buf + pos, sizeof(buf) - pos, "_%s", type_mangle_suffix(types[i]));
     }
-    return my_strdup(buf);
+    return str_dup(buf, strlen(buf));
 }
 
 MonoInstance *find_mono_instance(TypeTable *tt, const char *name, Type **types, int count) {
@@ -367,12 +356,9 @@ MonoInstance *find_mono_instance(TypeTable *tt, const char *name, Type **types, 
 }
 
 MonoInstance *add_mono_instance(TypeTable *tt, const char *name, Type **types, int count) {
-    if (tt->mono_instance_count >= tt->mono_instance_cap) {
-        tt->mono_instance_cap = tt->mono_instance_cap ? tt->mono_instance_cap * 2 : 16;
-        tt->mono_instances = realloc(tt->mono_instances, sizeof(MonoInstance) * tt->mono_instance_cap);
-    }
+    GROW_ARRAY(tt->mono_instances, tt->mono_instance_count, tt->mono_instance_cap, MonoInstance);
     MonoInstance *mi = &tt->mono_instances[tt->mono_instance_count++];
-    mi->generic_name = my_strdup(name);
+    mi->generic_name = str_dup(name, strlen(name));
     mi->concrete_types = malloc(sizeof(Type *) * count);
     memcpy(mi->concrete_types, types, sizeof(Type *) * count);
     mi->type_count = count;

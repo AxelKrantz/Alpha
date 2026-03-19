@@ -2,6 +2,14 @@
 #define ALPHA_AST_H
 
 #include "lexer.h"
+
+// Growable array helper — used throughout the compiler
+#define GROW_ARRAY(ptr, count, cap, type) do { \
+    if ((count) >= (cap)) { \
+        (cap) = (cap) ? (cap) * 2 : 8; \
+        (ptr) = realloc((ptr), sizeof(type) * (cap)); \
+    } \
+} while(0)
 #include <stdint.h>
 #include <stdbool.h>
 

@@ -196,10 +196,7 @@ static bool unify_types(Type *pattern, Type *concrete, Type **type_args, int par
 // ---- Register impl block ----
 
 static void register_impl(Checker *c, const char *struct_name, ASTNode *impl_node) {
-    if (c->impl_count >= c->impl_cap) {
-        c->impl_cap = c->impl_cap == 0 ? 16 : c->impl_cap * 2;
-        c->impls = realloc(c->impls, sizeof(c->impls[0]) * c->impl_cap);
-    }
+    GROW_ARRAY(c->impls, c->impl_count, c->impl_cap, c->impls[0]);
     char *name = malloc(strlen(struct_name) + 1);
     strcpy(name, struct_name);
     c->impls[c->impl_count].struct_name = name;
@@ -697,7 +694,7 @@ static Type *check_expr(Checker *c, ASTNode *node) {
                     "unknown type '%s'", node->struct_lit.name);
             }
             for (int i = 0; i < node->struct_lit.values.count; i++) {
-                Type *val_type = check_expr(c, node->struct_lit.values.items[i]);
+                check_expr(c, node->struct_lit.values.items[i]);
                 // Propagate struct field type to empty array literals
                 if (t->kind == TYPE_STRUCT && i < node->struct_lit.field_inits.count) {
                     const char *field_name = node->struct_lit.field_inits.items[i].name;
@@ -894,9 +891,6 @@ static Type *check_expr(Checker *c, ASTNode *node) {
                     // the binding names. The actual types come from the enum decl.
                     // We need to find the enum decl AST node.
                     // For now, search registered enums for field types
-                    const char *ename = pat->enum_variant_expr.enum_name;
-                    const char *vname = pat->enum_variant_expr.variant_name;
-
                     for (int bi = 0; bi < arm->match_arm.bind_count; bi++) {
                         if (strcmp(arm->match_arm.bind_names[bi], "_") == 0) continue;
                         // Default to unknown — __auto_type handles it in C
@@ -1106,6 +1100,31 @@ static void check_block(Checker *c, ASTNode *node) {
 
 // ---- Check declarations (first pass: register, second pass: check bodies) ----
 
+// Register methods from an impl block or impl-trait block
+static void register_impl_methods(Checker *c, const char *type_name, NodeList *methods) {
+    for (int i = 0; i < methods->count; i++) {
+        ASTNode *method = methods->items[i];
+        char mangled[256];
+        snprintf(mangled, sizeof(mangled), "%s_%s", type_name, method->fn_decl.name);
+
+        int param_count = method->fn_decl.params.count;
+        Type **params = calloc(param_count, sizeof(Type *));
+        for (int j = 0; j < param_count; j++) {
+            if (strcmp(method->fn_decl.params.items[j].name, "self") == 0) {
+                params[j] = type_resolve_name(&c->types, type_name);
+            } else if (method->fn_decl.params.items[j].type) {
+                params[j] = resolve_type_node(c, method->fn_decl.params.items[j].type);
+            } else {
+                params[j] = c->types.t_unknown;
+            }
+        }
+        Type *ret = method->fn_decl.return_type
+            ? resolve_type_node(c, method->fn_decl.return_type) : c->types.t_void;
+        Type *fn_type = type_new_fn(&c->types, params, param_count, ret);
+        scope_define(&c->types, mangled, fn_type, false);
+    }
+}
+
 static void register_decl(Checker *c, ASTNode *node) {
     switch (node->type) {
         case NODE_STRUCT_DECL: {
@@ -1163,61 +1182,16 @@ static void register_decl(Checker *c, ASTNode *node) {
         }
 
         case NODE_IMPL_BLOCK: {
-            register_impl(c, node->impl_block.type_name, node);
-            // Register methods as TypeName_method functions
-            for (int i = 0; i < node->impl_block.methods.count; i++) {
-                ASTNode *method = node->impl_block.methods.items[i];
-                char mangled[256];
-                snprintf(mangled, sizeof(mangled), "%s_%s",
-                    node->impl_block.type_name, method->fn_decl.name);
-
-                int param_count = method->fn_decl.params.count;
-                Type **params = calloc(param_count, sizeof(Type *));
-                for (int j = 0; j < param_count; j++) {
-                    if (strcmp(method->fn_decl.params.items[j].name, "self") == 0) {
-                        params[j] = type_resolve_name(&c->types, node->impl_block.type_name);
-                    } else if (method->fn_decl.params.items[j].type) {
-                        params[j] = resolve_type_node(c, method->fn_decl.params.items[j].type);
-                    } else {
-                        params[j] = c->types.t_unknown;
-                    }
-                }
-                Type *ret = method->fn_decl.return_type
-                    ? resolve_type_node(c, method->fn_decl.return_type)
-                    : c->types.t_void;
-
-                Type *fn_type = type_new_fn(&c->types, params, param_count, ret);
-                scope_define(&c->types, mangled, fn_type, false);
-            }
+            const char *tn = node->impl_block.type_name;
+            register_impl(c, tn, node);
+            register_impl_methods(c, tn, &node->impl_block.methods);
             break;
         }
 
         case NODE_IMPL_TRAIT: {
-            // impl Trait for Type — register methods same as impl block
-            register_impl(c, node->impl_trait.type_name, node);
-            for (int i = 0; i < node->impl_trait.methods.count; i++) {
-                ASTNode *method = node->impl_trait.methods.items[i];
-                char mangled[256];
-                snprintf(mangled, sizeof(mangled), "%s_%s",
-                    node->impl_trait.type_name, method->fn_decl.name);
-
-                int param_count = method->fn_decl.params.count;
-                Type **params = calloc(param_count, sizeof(Type *));
-                for (int j = 0; j < param_count; j++) {
-                    if (strcmp(method->fn_decl.params.items[j].name, "self") == 0) {
-                        params[j] = type_resolve_name(&c->types, node->impl_trait.type_name);
-                    } else if (method->fn_decl.params.items[j].type) {
-                        params[j] = resolve_type_node(c, method->fn_decl.params.items[j].type);
-                    } else {
-                        params[j] = c->types.t_unknown;
-                    }
-                }
-                Type *ret = method->fn_decl.return_type
-                    ? resolve_type_node(c, method->fn_decl.return_type)
-                    : c->types.t_void;
-                Type *fn_type = type_new_fn(&c->types, params, param_count, ret);
-                scope_define(&c->types, mangled, fn_type, false);
-            }
+            const char *tn = node->impl_trait.type_name;
+            register_impl(c, tn, node);
+            register_impl_methods(c, tn, &node->impl_trait.methods);
             break;
         }
 

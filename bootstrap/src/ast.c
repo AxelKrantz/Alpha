@@ -22,14 +22,7 @@ void node_list_init(NodeList *list) {
 }
 
 void node_list_push(NodeList *list, ASTNode *node) {
-    if (list->count >= list->capacity) {
-        list->capacity = list->capacity == 0 ? 8 : list->capacity * 2;
-        list->items = realloc(list->items, sizeof(ASTNode *) * list->capacity);
-        if (!list->items) {
-            fprintf(stderr, "fatal: out of memory\n");
-            exit(1);
-        }
-    }
+    GROW_ARRAY(list->items, list->count, list->capacity, ASTNode *);
     list->items[list->count++] = node;
 }
 
@@ -40,14 +33,7 @@ void field_list_init(FieldList *list) {
 }
 
 void field_list_push(FieldList *list, Field field) {
-    if (list->count >= list->capacity) {
-        list->capacity = list->capacity == 0 ? 8 : list->capacity * 2;
-        list->items = realloc(list->items, sizeof(Field) * list->capacity);
-        if (!list->items) {
-            fprintf(stderr, "fatal: out of memory\n");
-            exit(1);
-        }
-    }
+    GROW_ARRAY(list->items, list->count, list->capacity, Field);
     list->items[list->count++] = field;
 }
 

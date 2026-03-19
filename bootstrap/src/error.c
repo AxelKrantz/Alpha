@@ -1,4 +1,5 @@
 #include "error.h"
+#include "ast.h"
 #include <string.h>
 
 DiagContext *g_diag = NULL;
@@ -133,10 +134,7 @@ void diag_emit(DiagContext *ctx, DiagLevel level, int line, int col, int length,
 
     // Store for JSON mode
     if (ctx->json_mode) {
-        if (ctx->count >= ctx->capacity) {
-            ctx->capacity = ctx->capacity == 0 ? 16 : ctx->capacity * 2;
-            ctx->items = realloc(ctx->items, sizeof(Diagnostic) * ctx->capacity);
-        }
+        GROW_ARRAY(ctx->items, ctx->count, ctx->capacity, Diagnostic);
         ctx->items[ctx->count++] = d;
     } else {
         // Pretty print immediately

@@ -225,7 +225,7 @@ int main(int argc, char **argv) {
         CodeGen gen;
         codegen_init(&gen, c_file);
         gen.test_mode = true;
-        gen.current_struct = input_file;
+        gen.test_filename = input_file;
         gen.type_table = &checker.types;
         codegen_emit(&gen, program);
         fclose(c_file);

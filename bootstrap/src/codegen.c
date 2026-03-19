@@ -7,6 +7,7 @@ void codegen_init(CodeGen *gen, FILE *out) {
     gen->out = out;
     gen->indent = 0;
     gen->current_struct = NULL;
+    gen->test_filename = NULL;
     gen->test_mode = false;
     gen->strip_contracts = false;
     gen->current_ensures = NULL;
@@ -161,10 +162,7 @@ static void emit_c_string(FILE *out, const char *s) {
 
 // Track a variable that owns heap memory (auto-freed at scope exit)
 static void track_owned(CodeGen *gen, const char *name, const char *free_fn) {
-    if (gen->owned_count >= gen->owned_cap) {
-        gen->owned_cap = gen->owned_cap ? gen->owned_cap * 2 : 16;
-        gen->owned_vars = realloc(gen->owned_vars, sizeof(gen->owned_vars[0]) * gen->owned_cap);
-    }
+    GROW_ARRAY(gen->owned_vars, gen->owned_count, gen->owned_cap, gen->owned_vars[0]);
     gen->owned_vars[gen->owned_count].name = strdup(name);
     gen->owned_vars[gen->owned_count].free_fn = free_fn;
     gen->owned_vars[gen->owned_count].scope_depth = gen->scope_depth;
@@ -1053,6 +1051,8 @@ static void emit_expr(CodeGen *gen, ASTNode *node) {
             Type *obj_type = node->method_call.object->resolved_type;
             const char *method = node->method_call.method;
 
+            (void)node->method_call.args.count; // args validated by checker
+
             // Substitute type params in generic context
             if (gen->subst_count > 0 && obj_type) {
                 if (obj_type->kind == TYPE_PARAM) {
@@ -1419,10 +1419,7 @@ static void emit_expr(CodeGen *gen, ASTNode *node) {
             // Assign a unique ID and register for hoisting
             int id = gen->lambda_count++;
             node->lambda.id = id;
-            if (gen->lambda_count > gen->lambda_cap) {
-                gen->lambda_cap = gen->lambda_cap ? gen->lambda_cap * 2 : 16;
-                gen->lambdas = realloc(gen->lambdas, sizeof(ASTNode *) * gen->lambda_cap);
-            }
+            GROW_ARRAY(gen->lambdas, id, gen->lambda_cap, ASTNode *);
             gen->lambdas[id] = node;
 
             // If lambda captures variables, set the static capture vars before use
@@ -1692,11 +1689,7 @@ static void emit_stmt(CodeGen *gen, ASTNode *node) {
             break;
 
         case NODE_DEFER_STMT:
-            // Push to defer stack — emitted at function return
-            if (gen->defer_count >= gen->defer_cap) {
-                gen->defer_cap = gen->defer_cap ? gen->defer_cap * 2 : 8;
-                gen->defer_stack = realloc(gen->defer_stack, sizeof(ASTNode *) * gen->defer_cap);
-            }
+            GROW_ARRAY(gen->defer_stack, gen->defer_count, gen->defer_cap, ASTNode *);
             gen->defer_stack[gen->defer_count++] = node->defer_stmt.stmt;
             break;
 
@@ -2588,21 +2581,94 @@ void codegen_emit(CodeGen *gen, ASTNode *program) {
     }
     fprintf(gen->out, "\n");
 
-    // Pre-scan for lambdas (collect all NODE_LAMBDA nodes)
-    // First pass the AST to assign IDs, then emit lambda functions
+    // Pre-scan for lambdas via AST walk (no /dev/null emission)
     {
-        // Scan function: walks all nodes looking for lambdas
-        // We do this by emitting all functions to /dev/null first to collect lambdas
-        FILE *saved_out = gen->out;
-        gen->out = fopen("/dev/null", "w");
+        // Walk all function bodies to find and register NODE_LAMBDA nodes
         for (int i = 0; i < program->program.decls.count; i++) {
             ASTNode *decl = program->program.decls.items[i];
-            if (decl->type == NODE_FN_DECL || decl->type == NODE_IMPL_BLOCK || decl->type == NODE_IMPL_TRAIT) {
-                emit_decl(gen, decl);
+            // Collect lambdas from functions, impl blocks, and trait impls
+            ASTNode *scan_stack[256];
+            int scan_top = 0;
+
+            if (decl->type == NODE_FN_DECL && decl->fn_decl.body)
+                scan_stack[scan_top++] = decl->fn_decl.body;
+            else if (decl->type == NODE_IMPL_BLOCK) {
+                for (int m = 0; m < decl->impl_block.methods.count && scan_top < 255; m++)
+                    if (decl->impl_block.methods.items[m]->fn_decl.body)
+                        scan_stack[scan_top++] = decl->impl_block.methods.items[m]->fn_decl.body;
+            } else if (decl->type == NODE_IMPL_TRAIT) {
+                for (int m = 0; m < decl->impl_trait.methods.count && scan_top < 255; m++)
+                    if (decl->impl_trait.methods.items[m]->fn_decl.body)
+                        scan_stack[scan_top++] = decl->impl_trait.methods.items[m]->fn_decl.body;
+            }
+
+            while (scan_top > 0) {
+                ASTNode *n = scan_stack[--scan_top];
+                if (!n) continue;
+                if (n->type == NODE_LAMBDA) {
+                    int id = gen->lambda_count++;
+                    n->lambda.id = id;
+                    GROW_ARRAY(gen->lambdas, id, gen->lambda_cap, ASTNode *);
+                    gen->lambdas[id] = n;
+                }
+                // Push children for scanning
+                switch (n->type) {
+                    case NODE_BLOCK:
+                        for (int j = 0; j < n->block.stmts.count && scan_top < 255; j++)
+                            scan_stack[scan_top++] = n->block.stmts.items[j];
+                        break;
+                    case NODE_LET_STMT: if (n->let_stmt.init && scan_top < 255) scan_stack[scan_top++] = n->let_stmt.init; break;
+                    case NODE_RETURN_STMT: if (n->return_stmt.value && scan_top < 255) scan_stack[scan_top++] = n->return_stmt.value; break;
+                    case NODE_EXPR_STMT: if (n->expr_stmt.expr && scan_top < 255) scan_stack[scan_top++] = n->expr_stmt.expr; break;
+                    case NODE_IF_STMT:
+                        if (scan_top < 253) {
+                            scan_stack[scan_top++] = n->if_stmt.then_block;
+                            if (n->if_stmt.else_block) scan_stack[scan_top++] = n->if_stmt.else_block;
+                            scan_stack[scan_top++] = n->if_stmt.condition;
+                        }
+                        break;
+                    case NODE_WHILE_STMT:
+                        if (scan_top < 254) { scan_stack[scan_top++] = n->while_stmt.body; scan_stack[scan_top++] = n->while_stmt.condition; }
+                        break;
+                    case NODE_FOR_STMT:
+                        if (scan_top < 254) { scan_stack[scan_top++] = n->for_stmt.body; scan_stack[scan_top++] = n->for_stmt.iterable; }
+                        break;
+                    case NODE_BINARY_EXPR:
+                        if (scan_top < 254) { scan_stack[scan_top++] = n->binary.left; scan_stack[scan_top++] = n->binary.right; }
+                        break;
+                    case NODE_UNARY_EXPR: if (scan_top < 255) scan_stack[scan_top++] = n->unary.operand; break;
+                    case NODE_CALL_EXPR:
+                        if (scan_top < 254) {
+                            scan_stack[scan_top++] = n->call.callee;
+                            for (int j = 0; j < n->call.args.count && scan_top < 255; j++)
+                                scan_stack[scan_top++] = n->call.args.items[j];
+                        }
+                        break;
+                    case NODE_METHOD_CALL:
+                        if (scan_top < 254) {
+                            scan_stack[scan_top++] = n->method_call.object;
+                            for (int j = 0; j < n->method_call.args.count && scan_top < 255; j++)
+                                scan_stack[scan_top++] = n->method_call.args.items[j];
+                        }
+                        break;
+                    case NODE_ASSIGN_STMT:
+                        if (scan_top < 254) { scan_stack[scan_top++] = n->assign_stmt.target; scan_stack[scan_top++] = n->assign_stmt.value; }
+                        break;
+                    case NODE_MATCH_EXPR:
+                        if (scan_top < 254) {
+                            scan_stack[scan_top++] = n->match_expr.subject;
+                            for (int j = 0; j < n->match_expr.arms.count && scan_top < 255; j++) {
+                                ASTNode *arm = n->match_expr.arms.items[j];
+                                if (arm->match_arm.body && scan_top < 255) scan_stack[scan_top++] = arm->match_arm.body;
+                            }
+                        }
+                        break;
+                    case NODE_DEFER_STMT: if (scan_top < 255) scan_stack[scan_top++] = n->defer_stmt.stmt; break;
+                    default: break;
+                }
             }
         }
-        fclose(gen->out);
-        gen->out = saved_out;
+        gen->lambda_count = 0; // reset — will be re-assigned during actual emission
 
         // Now emit the collected lambda functions
         for (int i = 0; i < gen->lambda_count; i++) {
@@ -2827,7 +2893,7 @@ void codegen_emit(CodeGen *gen, ASTNode *program) {
         fprintf(gen->out, "int main(int argc, char** argv) {\n");
         fprintf(gen->out, "    alpha_argc = argc;\n");
         fprintf(gen->out, "    alpha_argv = argv;\n");
-        fprintf(gen->out, "    alpha_test_file = \"%s\";\n", gen->current_struct ? gen->current_struct : "");
+        fprintf(gen->out, "    alpha_test_file = \"%s\";\n", gen->test_filename ? gen->test_filename : "");
         fprintf(gen->out, "    int json = 0;\n");
         fprintf(gen->out, "    int json_first = 1;\n");
         fprintf(gen->out, "    for (int i = 1; i < argc; i++) {\n");
