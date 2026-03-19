@@ -202,6 +202,7 @@ const char *type_kind_name(TypeKind kind) {
         case TYPE_FN:      return "fn";
         case TYPE_MAP:     return "map";
         case TYPE_OPTION:  return "option";
+        case TYPE_RESULT:  return "result";
         case TYPE_PARAM:   return "T";
         case TYPE_UNKNOWN: return "unknown";
     }
@@ -262,6 +263,12 @@ const char *type_to_c(Type *t) {
             snprintf(map_buf, sizeof(map_buf), "AlphaMap_%s", suffix);
             return map_buf;
         }
+        case TYPE_RESULT: {
+            static char res_buf[128];
+            const char *suffix = t->result_info.ok_type ? type_array_suffix(t->result_info.ok_type) : "i64";
+            snprintf(res_buf, sizeof(res_buf), "AlphaResult_%s", suffix);
+            return res_buf;
+        }
         case TYPE_PARAM:   return "/* TYPE_PARAM */void";
         case TYPE_UNKNOWN: return "int64_t";
     }
@@ -277,6 +284,12 @@ Type *type_new_map(TypeTable *tt, Type *value_type) {
 Type *type_new_option(TypeTable *tt, Type *inner_type) {
     Type *t = type_new(tt, TYPE_OPTION, NULL);
     t->option_info.inner_type = inner_type;
+    return t;
+}
+
+Type *type_new_result(TypeTable *tt, Type *ok_type) {
+    Type *t = type_new(tt, TYPE_RESULT, NULL);
+    t->result_info.ok_type = ok_type;
     return t;
 }
 

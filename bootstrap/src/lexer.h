@@ -70,6 +70,7 @@ typedef enum {
     TOK_DOT,
     TOK_DOTDOT,
     TOK_BANG,
+    TOK_QUESTION,
     TOK_PLUS_ASSIGN,
     TOK_MINUS_ASSIGN,
     TOK_STAR_ASSIGN,

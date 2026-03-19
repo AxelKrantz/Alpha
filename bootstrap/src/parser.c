@@ -352,6 +352,14 @@ static ASTNode *parse_postfix(Parser *p) {
             continue;
         }
 
+        // Try operator: expr?
+        if (parser_match(p, TOK_QUESTION)) {
+            ASTNode *node = ast_new(NODE_TRY_EXPR, line, col);
+            node->try_expr.operand = expr;
+            expr = node;
+            continue;
+        }
+
         break;
     }
 

@@ -49,6 +49,7 @@ typedef enum {
     NODE_REF_EXPR,
     NODE_DEREF_EXPR,
     NODE_LAMBDA,
+    NODE_TRY_EXPR,           // expr? (unwrap or early return)
     NODE_ENUM_VARIANT_EXPR,  // Shape::Circle(5.0)
     NODE_ENUM_VARIANT_DEF,   // Circle(f64) in enum declaration
     NODE_MATCH_EXPR,
@@ -276,6 +277,9 @@ struct ASTNode {
             Type **capture_types;
             int capture_count;
         } lambda;
+
+        // NODE_TRY_EXPR: expr?
+        struct { ASTNode *operand; } try_expr;
 
         // NODE_ENUM_VARIANT_EXPR: Shape::Circle(5.0)
         struct {

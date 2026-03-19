@@ -299,6 +299,8 @@ static Token lexer_next_raw(Lexer *lexer) {
             if (match(lexer, '=')) return make_token(lexer, TOK_EQ, start, line, col);
             if (match(lexer, '>')) return make_token(lexer, TOK_FAT_ARROW, start, line, col);
             return make_token(lexer, TOK_ASSIGN, start, line, col);
+        case '?':
+            return make_token(lexer, TOK_QUESTION, start, line, col);
         case '!':
             if (match(lexer, '=')) return make_token(lexer, TOK_NEQ, start, line, col);
             return make_token(lexer, TOK_BANG, start, line, col);
@@ -419,6 +421,7 @@ const char *token_type_name(TokenType type) {
         case TOK_DOT: return ".";
         case TOK_DOTDOT: return "..";
         case TOK_BANG: return "!";
+        case TOK_QUESTION: return "?";
         case TOK_PLUS_ASSIGN: return "+=";
         case TOK_MINUS_ASSIGN: return "-=";
         case TOK_STAR_ASSIGN: return "*=";

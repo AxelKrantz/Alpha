@@ -70,7 +70,7 @@ static bool is_builtin_name(const char *name) {
         "args_count", "args_get", "run_command",
         "sb_new", "sb_append", "sb_append_char", "sb_to_str",
         "assert_eq", "assert_neq", "assert_lt", "assert_gt",
-        "format", "map_new", "some",
+        "format", "map_new", "some", "ok", "err",
         "as_i64", "as_f64", "as_i32", "as_u8", "as_bool",
         "env_get", "panic",
         NULL
@@ -115,6 +115,11 @@ static Type *resolve_type_node(Checker *c, ASTNode *node) {
                 resolve_type_node(c, node->type_array.element_type));
 
         case NODE_TYPE_GENERIC:
+            // Handle Result<T>
+            if (strcmp(node->type_generic.name, "Result") == 0 && node->type_generic.type_args.count > 0) {
+                Type *ok_type = resolve_type_node(c, node->type_generic.type_args.items[0]);
+                return type_new_result(&c->types, ok_type);
+            }
             // Handle Option<T>
             if (strcmp(node->type_generic.name, "Option") == 0 && node->type_generic.type_args.count > 0) {
                 Type *inner = resolve_type_node(c, node->type_generic.type_args.items[0]);
@@ -390,6 +395,23 @@ static Type *check_expr(Checker *c, ASTNode *node) {
                     result = c->types.t_unknown; // opaque pointer
                     break;
                 }
+                if (strcmp(name, "ok") == 0 && node->call.args.count == 1) {
+                    Type *inner = check_expr(c, node->call.args.items[0]);
+                    result = type_new_result(&c->types, inner);
+                    node->resolved_type = result;
+                    return result;
+                }
+                if (strcmp(name, "err") == 0 && node->call.args.count == 1) {
+                    check_expr(c, node->call.args.items[0]);
+                    // Return type depends on context — default to Result<str>
+                    if (c->current_ret && c->current_ret->kind == TYPE_RESULT) {
+                        result = c->current_ret;
+                    } else {
+                        result = type_new_result(&c->types, c->types.t_str);
+                    }
+                    node->resolved_type = result;
+                    return result;
+                }
                 if (strcmp(name, "some") == 0 && node->call.args.count == 1) {
                     Type *inner = check_expr(c, node->call.args.items[0]);
                     result = type_new_option(&c->types, inner);
@@ -537,6 +559,18 @@ static Type *check_expr(Checker *c, ASTNode *node) {
                 else if (strcmp(method, "any") == 0 || strcmp(method, "all") == 0) result = c->types.t_bool;
                 else if (strcmp(method, "count") == 0) result = c->types.t_i64;
                 else check_error(c, node->line, node->column, "no method '%s' on array", method);
+                for (int i = 0; i < node->method_call.args.count; i++)
+                    check_expr(c, node->method_call.args.items[i]);
+                break;
+            }
+
+            // Result methods
+            if (obj_type->kind == TYPE_RESULT) {
+                Type *ok_t = obj_type->result_info.ok_type ? obj_type->result_info.ok_type : c->types.t_unknown;
+                if (strcmp(method, "is_ok") == 0 || strcmp(method, "is_err") == 0) result = c->types.t_bool;
+                else if (strcmp(method, "unwrap") == 0 || strcmp(method, "unwrap_or") == 0) result = ok_t;
+                else if (strcmp(method, "error") == 0) result = c->types.t_str;
+                else check_error(c, node->line, node->column, "no method '%s' on Result", method);
                 for (int i = 0; i < node->method_call.args.count; i++)
                     check_expr(c, node->method_call.args.items[i]);
                 break;
@@ -693,6 +727,18 @@ static Type *check_expr(Checker *c, ASTNode *node) {
         case NODE_REF_EXPR: {
             Type *inner = check_expr(c, node->ref_expr.operand);
             result = type_new_ref(&c->types, inner, node->ref_expr.is_mut);
+            break;
+        }
+
+        case NODE_TRY_EXPR: {
+            Type *inner = check_expr(c, node->try_expr.operand);
+            if (inner->kind == TYPE_RESULT && inner->result_info.ok_type) {
+                result = inner->result_info.ok_type;
+            } else if (inner->kind == TYPE_OPTION && inner->option_info.inner_type) {
+                result = inner->option_info.inner_type;
+            } else {
+                result = c->types.t_unknown;
+            }
             break;
         }
 

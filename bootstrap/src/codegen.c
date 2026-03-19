@@ -294,6 +294,18 @@ static void emit_type(CodeGen *gen, ASTNode *type) {
         }
 
         case NODE_TYPE_GENERIC:
+            if (strcmp(type->type_generic.name, "Result") == 0 && type->type_generic.type_args.count > 0) {
+                ASTNode *inner_node = type->type_generic.type_args.items[0];
+                const char *suffix = "i64";
+                if (inner_node->type == NODE_TYPE_BASIC) {
+                    const char *n = inner_node->type_basic.name;
+                    if (strcmp(n, "f64") == 0) suffix = "f64";
+                    else if (strcmp(n, "str") == 0) suffix = "str";
+                    else if (strcmp(n, "bool") == 0) suffix = "bool";
+                }
+                fprintf(gen->out, "AlphaResult_%s", suffix);
+                break;
+            }
             if (strcmp(type->type_generic.name, "Option") == 0 && type->type_generic.type_args.count > 0) {
                 ASTNode *inner_node = type->type_generic.type_args.items[0];
                 const char *suffix = "i64";
@@ -364,6 +376,8 @@ static bool is_builtin_fn(const char *name) {
            strcmp(name, "format") == 0 ||
            strcmp(name, "map_new") == 0 ||
            strcmp(name, "some") == 0 ||
+           strcmp(name, "ok") == 0 ||
+           strcmp(name, "err") == 0 ||
            strcmp(name, "as_i64") == 0 ||
            strcmp(name, "as_f64") == 0 ||
            strcmp(name, "as_i32") == 0 ||
@@ -992,6 +1006,36 @@ static void emit_expr(CodeGen *gen, ASTNode *node) {
             break;
 
         case NODE_CALL_EXPR: {
+            // ok(value) — wrap in Result
+            if (node->call.callee->type == NODE_IDENT &&
+                strcmp(node->call.callee->ident.name, "ok") == 0 &&
+                node->call.args.count == 1) {
+                const char *suffix = "i64";
+                if (node->resolved_type && node->resolved_type->kind == TYPE_RESULT &&
+                    node->resolved_type->result_info.ok_type) {
+                    suffix = type_array_suffix(node->resolved_type->result_info.ok_type);
+                } else if (node->call.args.items[0]->resolved_type) {
+                    suffix = type_array_suffix(node->call.args.items[0]->resolved_type);
+                }
+                fprintf(gen->out, "AlphaResult_%s_ok(", suffix);
+                emit_expr(gen, node->call.args.items[0]);
+                fprintf(gen->out, ")");
+                break;
+            }
+            // err(message) — error Result
+            if (node->call.callee->type == NODE_IDENT &&
+                strcmp(node->call.callee->ident.name, "err") == 0 &&
+                node->call.args.count == 1) {
+                const char *suffix = "str";
+                if (node->resolved_type && node->resolved_type->kind == TYPE_RESULT &&
+                    node->resolved_type->result_info.ok_type) {
+                    suffix = type_array_suffix(node->resolved_type->result_info.ok_type);
+                }
+                fprintf(gen->out, "AlphaResult_%s_err(", suffix);
+                emit_expr(gen, node->call.args.items[0]);
+                fprintf(gen->out, ")");
+                break;
+            }
             // some(value) — wrap in Option
             if (node->call.callee->type == NODE_IDENT &&
                 strcmp(node->call.callee->ident.name, "some") == 0 &&
@@ -1093,6 +1137,33 @@ static void emit_expr(CodeGen *gen, ASTNode *node) {
                     fprintf(gen->out, ")");
                 } else {
                     fprintf(gen->out, "/* unknown array method '%s' */0", method);
+                }
+                break;
+            }
+
+            // Result methods: is_ok, is_err, unwrap, unwrap_or, error
+            if (obj_type && obj_type->kind == TYPE_RESULT) {
+                const char *suffix = obj_type->result_info.ok_type
+                    ? type_array_suffix(obj_type->result_info.ok_type) : "i64";
+                if (strcmp(method, "is_ok") == 0) {
+                    fprintf(gen->out, "("); emit_expr(gen, node->method_call.object);
+                    fprintf(gen->out, ").is_ok");
+                } else if (strcmp(method, "is_err") == 0) {
+                    fprintf(gen->out, "(!("); emit_expr(gen, node->method_call.object);
+                    fprintf(gen->out, ").is_ok)");
+                } else if (strcmp(method, "unwrap") == 0) {
+                    fprintf(gen->out, "AlphaResult_%s_unwrap(", suffix);
+                    emit_expr(gen, node->method_call.object);
+                    fprintf(gen->out, ")");
+                } else if (strcmp(method, "unwrap_or") == 0) {
+                    fprintf(gen->out, "AlphaResult_%s_unwrap_or(", suffix);
+                    emit_expr(gen, node->method_call.object);
+                    fprintf(gen->out, ", ");
+                    emit_expr(gen, node->method_call.args.items[0]);
+                    fprintf(gen->out, ")");
+                } else if (strcmp(method, "error") == 0) {
+                    fprintf(gen->out, "("); emit_expr(gen, node->method_call.object);
+                    fprintf(gen->out, ").error");
                 }
                 break;
             }
@@ -1341,6 +1412,20 @@ static void emit_expr(CodeGen *gen, ASTNode *node) {
             emit_expr(gen, node->deref_expr.operand);
             fprintf(gen->out, ")");
             break;
+
+        case NODE_TRY_EXPR: {
+            // expr? — unwrap Result or early-return error
+            // Emits: ({ __auto_type __try = (expr); if (!__try.is_ok) return __try; __try.value; })
+            // The return type must match the function's return type
+            fprintf(gen->out, "({ __auto_type __try = (");
+            emit_expr(gen, node->try_expr.operand);
+            fprintf(gen->out, "); if (!__try.is_ok) { ");
+            // Emit cleanup before early return
+            if (gen->owned_count > 0) emit_auto_cleanup(gen, NULL);
+            if (gen->defer_count > 0) emit_defers(gen);
+            fprintf(gen->out, "return __try; } __try.value; })");
+            break;
+        }
 
         case NODE_ENUM_VARIANT_EXPR: {
             // Emit as constructor call: EnumName_Variant(args)
@@ -2408,6 +2493,21 @@ void codegen_emit(CodeGen *gen, ASTNode *program) {
     fprintf(gen->out, "ALPHA_OPTION_DECL(double, f64)\n");
     fprintf(gen->out, "ALPHA_OPTION_DECL(const char*, str)\n");
     fprintf(gen->out, "ALPHA_OPTION_DECL(bool, bool)\n");
+    fprintf(gen->out, "\n");
+
+    // Result type: Ok(T) or Err(str)
+    fprintf(gen->out, "#define ALPHA_RESULT_DECL(T, S) \\\n");
+    fprintf(gen->out, "typedef struct { bool is_ok; T value; const char* error; } AlphaResult_##S; \\\n");
+    fprintf(gen->out, "static inline AlphaResult_##S AlphaResult_##S##_ok(T v) { return (AlphaResult_##S){true, v, \"\"}; } \\\n");
+    fprintf(gen->out, "static inline AlphaResult_##S AlphaResult_##S##_err(const char* e) { AlphaResult_##S r = {false}; r.error = e; return r; } \\\n");
+    fprintf(gen->out, "static inline T AlphaResult_##S##_unwrap(AlphaResult_##S r) { \\\n");
+    fprintf(gen->out, "  if (!r.is_ok) { fprintf(stderr, \"unwrap on err: %%s\\n\", r.error); __alpha_panic(\"result unwrap failed\"); } return r.value; } \\\n");
+    fprintf(gen->out, "static inline T AlphaResult_##S##_unwrap_or(AlphaResult_##S r, T def) { return r.is_ok ? r.value : def; }\n");
+    fprintf(gen->out, "\n");
+    fprintf(gen->out, "ALPHA_RESULT_DECL(int64_t, i64)\n");
+    fprintf(gen->out, "ALPHA_RESULT_DECL(double, f64)\n");
+    fprintf(gen->out, "ALPHA_RESULT_DECL(const char*, str)\n");
+    fprintf(gen->out, "ALPHA_RESULT_DECL(bool, bool)\n");
     fprintf(gen->out, "\n");
 
     // String split and join (after array types are defined)

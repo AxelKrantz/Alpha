@@ -25,7 +25,8 @@ typedef enum {
     TYPE_FN,
     TYPE_MAP,
     TYPE_OPTION,
-    TYPE_PARAM,    // unresolved type parameter (T, U)
+    TYPE_RESULT,
+    TYPE_PARAM,
     TYPE_UNKNOWN,
 } TypeKind;
 
@@ -82,9 +83,14 @@ struct Type {
             Type *inner_type;
         } option_info;
 
+        // TYPE_RESULT
+        struct {
+            Type *ok_type;
+        } result_info;
+
         // TYPE_PARAM
         struct {
-            int index;  // position in type_params list
+            int index;
         } param_info;
     };
 };
@@ -170,6 +176,7 @@ Type *type_new_fn(TypeTable *tt, Type **params, int param_count, Type *ret);
 Type *type_new_map(TypeTable *tt, Type *value_type);
 Type *type_new_option(TypeTable *tt, Type *inner_type);
 Type *type_new_param(TypeTable *tt, const char *name, int index);
+Type *type_new_result(TypeTable *tt, Type *ok_type);
 
 // Generics
 void register_generic_def(TypeTable *tt, const char *name, char **param_names, int param_count, void *ast_node, bool is_struct);
