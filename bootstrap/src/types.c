@@ -239,6 +239,8 @@ const char *type_to_c(Type *t) {
                 else if (t->array_info.element->kind == TYPE_U8) suffix = "u8";
                 else if (t->array_info.element->kind == TYPE_STRUCT && t->array_info.element->name)
                     suffix = t->array_info.element->name;
+                else if (t->array_info.element->kind == TYPE_ENUM && t->array_info.element->name)
+                    suffix = t->array_info.element->name;
                 snprintf(arr_buf, sizeof(arr_buf), "AlphaArr_%s", suffix);
                 (void)elem;
             } else {
@@ -407,6 +409,7 @@ const char *type_array_suffix(Type *elem) {
         case TYPE_STR: return "str";
         case TYPE_BOOL: return "bool";
         case TYPE_STRUCT: return elem->name ? elem->name : "i64";
+        case TYPE_ENUM: return elem->name ? elem->name : "i64";
         default: return "i64";
     }
 }

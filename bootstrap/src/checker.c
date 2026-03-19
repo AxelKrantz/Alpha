@@ -696,6 +696,15 @@ static Type *check_expr(Checker *c, ASTNode *node) {
             break;
         }
 
+        case NODE_ENUM_VARIANT_EXPR: {
+            // Resolve to the enum type
+            result = type_resolve_name(&c->types, node->enum_variant_expr.enum_name);
+            for (int i = 0; i < node->enum_variant_expr.args.count; i++) {
+                check_expr(c, node->enum_variant_expr.args.items[i]);
+            }
+            break;
+        }
+
         case NODE_DEREF_EXPR: {
             Type *inner = check_expr(c, node->deref_expr.operand);
             if (inner->kind == TYPE_REF) {
@@ -817,18 +826,43 @@ static Type *check_expr(Checker *c, ASTNode *node) {
             check_expr(c, node->match_expr.subject);
             for (int i = 0; i < node->match_expr.arms.count; i++) {
                 ASTNode *arm = node->match_expr.arms.items[i];
-                if (arm->match_arm.pattern) {
-                    check_expr(c, arm->match_arm.pattern);
+                ASTNode *pat = arm->match_arm.pattern;
+
+                // For enum variant patterns, don't check as expression
+                // (the args are binding names, not variables)
+                if (pat && pat->type != NODE_ENUM_VARIANT_EXPR) {
+                    check_expr(c, pat);
                 }
+
+                // Check body with bindings in scope
+                scope_push(&c->types);
+
+                // Define destructured bindings
+                if (pat && pat->type == NODE_ENUM_VARIANT_EXPR && arm->match_arm.bind_count > 0) {
+                    // Look up the enum variant to get field types
+                    // For now, define as unknown — they'll resolve from __auto_type in C
+                    for (int bi = 0; bi < arm->match_arm.bind_count; bi++) {
+                        if (strcmp(arm->match_arm.bind_names[bi], "_") == 0) continue;
+                        scope_define(&c->types, arm->match_arm.bind_names[bi],
+                                     c->types.t_unknown, false);
+                        Symbol *sym = scope_lookup(&c->types, arm->match_arm.bind_names[bi]);
+                        if (sym) sym->used = true; // suppress unused warning
+                    }
+                }
+
                 if (arm->match_arm.body) {
                     if (arm->match_arm.body->type == NODE_BLOCK) {
-                        check_block(c, arm->match_arm.body);
+                        // Don't use check_block (it pushes another scope)
+                        for (int si = 0; si < arm->match_arm.body->block.stmts.count; si++) {
+                            check_stmt(c, arm->match_arm.body->block.stmts.items[si]);
+                        }
                     } else {
                         check_expr(c, arm->match_arm.body);
                     }
                 }
+                scope_pop(&c->types);
             }
-            result = c->types.t_void; // match as statement for now
+            result = c->types.t_void;
             break;
         }
 

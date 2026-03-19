@@ -1335,6 +1335,18 @@ static void emit_expr(CodeGen *gen, ASTNode *node) {
             fprintf(gen->out, ")");
             break;
 
+        case NODE_ENUM_VARIANT_EXPR: {
+            // Emit as constructor call: EnumName_Variant(args)
+            fprintf(gen->out, "%s_%s(", node->enum_variant_expr.enum_name,
+                    node->enum_variant_expr.variant_name);
+            for (int i = 0; i < node->enum_variant_expr.args.count; i++) {
+                if (i > 0) fprintf(gen->out, ", ");
+                emit_expr(gen, node->enum_variant_expr.args.items[i]);
+            }
+            fprintf(gen->out, ")");
+            break;
+        }
+
         case NODE_LAMBDA: {
             // Assign a unique ID and register for hoisting
             int id = gen->lambda_count++;
@@ -1651,12 +1663,25 @@ static void emit_stmt(CodeGen *gen, ASTNode *node) {
             bool first = true;
             for (int i = 0; i < node->match_expr.arms.count; i++) {
                 ASTNode *arm = node->match_expr.arms.items[i];
+                ASTNode *pat = arm->match_arm.pattern;
 
-                if (!arm->match_arm.pattern) {
+                if (!pat) {
                     // Wildcard arm (_) — emit as else
                     emit_indent(gen);
                     if (!first) fprintf(gen->out, "else ");
                     fprintf(gen->out, "{\n");
+                } else if (pat->type == NODE_ENUM_VARIANT_EXPR) {
+                    // Enum variant pattern: match tag
+                    emit_indent(gen);
+                    if (first) {
+                        fprintf(gen->out, "if (__match_val.tag == %s_TAG_%s) {\n",
+                                pat->enum_variant_expr.enum_name,
+                                pat->enum_variant_expr.variant_name);
+                    } else {
+                        fprintf(gen->out, "else if (__match_val.tag == %s_TAG_%s) {\n",
+                                pat->enum_variant_expr.enum_name,
+                                pat->enum_variant_expr.variant_name);
+                    }
                 } else {
                     emit_indent(gen);
                     if (first) {
@@ -1664,12 +1689,23 @@ static void emit_stmt(CodeGen *gen, ASTNode *node) {
                     } else {
                         fprintf(gen->out, "else if (__match_val == ");
                     }
-                    emit_expr(gen, arm->match_arm.pattern);
+                    emit_expr(gen, pat);
                     fprintf(gen->out, ") {\n");
                 }
                 first = false;
 
                 gen->indent++; gen->scope_depth++;
+
+                // Emit bindings for destructured enum variants
+                if (pat && pat->type == NODE_ENUM_VARIANT_EXPR && arm->match_arm.bind_count > 0) {
+                    for (int bi = 0; bi < arm->match_arm.bind_count; bi++) {
+                        if (strcmp(arm->match_arm.bind_names[bi], "_") == 0) continue;
+                        emit_indent(gen);
+                        fprintf(gen->out, "__auto_type %s = __match_val.%s._%d;\n",
+                                arm->match_arm.bind_names[bi],
+                                pat->enum_variant_expr.variant_name, bi);
+                    }
+                }
                 if (arm->match_arm.body->type == NODE_BLOCK) {
                     for (int j = 0; j < arm->match_arm.body->block.stmts.count; j++) {
                         emit_stmt(gen, arm->match_arm.body->block.stmts.items[j]);
@@ -1882,18 +1918,93 @@ static void emit_struct_decl(CodeGen *gen, ASTNode *node) {
     fprintf(gen->out, "} %s;\n\n", node->struct_decl.name);
 }
 
+static const char *get_variant_name(ASTNode *v) {
+    if (v->type == NODE_IDENT) return v->ident.name;
+    if (v->type == NODE_ENUM_VARIANT_DEF) return v->enum_variant_def.name;
+    return "unknown";
+}
+
+static bool enum_has_data(ASTNode *node) {
+    for (int i = 0; i < node->enum_decl.variants.count; i++) {
+        if (node->enum_decl.variants.items[i]->type == NODE_ENUM_VARIANT_DEF)
+            return true;
+    }
+    return false;
+}
+
 static void emit_enum_decl(CodeGen *gen, ASTNode *node) {
-    fprintf(gen->out, "typedef enum {\n");
+    const char *name = node->enum_decl.name;
+
+    if (!enum_has_data(node)) {
+        // Simple enum (no data)
+        fprintf(gen->out, "typedef enum {\n");
+        gen->indent = 1;
+        for (int i = 0; i < node->enum_decl.variants.count; i++) {
+            emit_indent(gen);
+            fprintf(gen->out, "%s_%s", name, get_variant_name(node->enum_decl.variants.items[i]));
+            if (i < node->enum_decl.variants.count - 1) fprintf(gen->out, ",");
+            fprintf(gen->out, "\n");
+        }
+        gen->indent = 0;
+        fprintf(gen->out, "} %s;\n\n", name);
+        return;
+    }
+
+    // Tagged union: enum with data
+    // Tag enum
+    fprintf(gen->out, "enum %s_Tag {\n", name);
     gen->indent = 1;
     for (int i = 0; i < node->enum_decl.variants.count; i++) {
         emit_indent(gen);
-        fprintf(gen->out, "%s_%s", node->enum_decl.name,
-                node->enum_decl.variants.items[i]->ident.name);
+        fprintf(gen->out, "%s_TAG_%s = %d", name, get_variant_name(node->enum_decl.variants.items[i]), i);
         if (i < node->enum_decl.variants.count - 1) fprintf(gen->out, ",");
         fprintf(gen->out, "\n");
     }
     gen->indent = 0;
-    fprintf(gen->out, "} %s;\n\n", node->enum_decl.name);
+    fprintf(gen->out, "};\n");
+
+    // Union struct
+    fprintf(gen->out, "typedef struct {\n");
+    fprintf(gen->out, "    enum %s_Tag tag;\n", name);
+    fprintf(gen->out, "    union {\n");
+    for (int i = 0; i < node->enum_decl.variants.count; i++) {
+        ASTNode *v = node->enum_decl.variants.items[i];
+        if (v->type == NODE_ENUM_VARIANT_DEF && v->enum_variant_def.field_types.count > 0) {
+            fprintf(gen->out, "        struct { ");
+            for (int j = 0; j < v->enum_variant_def.field_types.count; j++) {
+                emit_type(gen, v->enum_variant_def.field_types.items[j]);
+                fprintf(gen->out, " _%d; ", j);
+            }
+            fprintf(gen->out, "} %s;\n", v->enum_variant_def.name);
+        }
+    }
+    fprintf(gen->out, "    };\n");
+    fprintf(gen->out, "} %s;\n\n", name);
+
+    // Constructor functions
+    for (int i = 0; i < node->enum_decl.variants.count; i++) {
+        ASTNode *v = node->enum_decl.variants.items[i];
+        const char *vname = get_variant_name(v);
+
+        if (v->type == NODE_ENUM_VARIANT_DEF && v->enum_variant_def.field_types.count > 0) {
+            fprintf(gen->out, "static inline %s %s_%s(", name, name, vname);
+            for (int j = 0; j < v->enum_variant_def.field_types.count; j++) {
+                if (j > 0) fprintf(gen->out, ", ");
+                emit_type(gen, v->enum_variant_def.field_types.items[j]);
+                fprintf(gen->out, " _%d", j);
+            }
+            fprintf(gen->out, ") {\n");
+            fprintf(gen->out, "    %s r; r.tag = %s_TAG_%s;\n", name, name, vname);
+            for (int j = 0; j < v->enum_variant_def.field_types.count; j++) {
+                fprintf(gen->out, "    r.%s._%d = _%d;\n", vname, j, j);
+            }
+            fprintf(gen->out, "    return r;\n}\n\n");
+        } else {
+            // No-data variant
+            fprintf(gen->out, "static inline %s %s_%s(void) {\n", name, name, vname);
+            fprintf(gen->out, "    %s r; r.tag = %s_TAG_%s; return r;\n}\n\n", name, name, vname);
+        }
+    }
 }
 
 static void emit_decl(CodeGen *gen, ASTNode *node) {
@@ -2324,11 +2435,14 @@ void codegen_emit(CodeGen *gen, ASTNode *program) {
         }
     }
 
-    // Emit array types for user structs
+    // Emit array types for user structs and enums
     for (int i = 0; i < program->program.decls.count; i++) {
         ASTNode *decl = program->program.decls.items[i];
         if (decl->type == NODE_STRUCT_DECL) {
             fprintf(gen->out, "ALPHA_ARRAY_DECL(%s, %s)\n", decl->struct_decl.name, decl->struct_decl.name);
+        }
+        if (decl->type == NODE_ENUM_DECL && enum_has_data(decl)) {
+            fprintf(gen->out, "ALPHA_ARRAY_DECL(%s, %s)\n", decl->enum_decl.name, decl->enum_decl.name);
         }
     }
     fprintf(gen->out, "\n");

@@ -172,8 +172,30 @@ static ASTNode *parse_primary(Parser *p) {
     if (parser_match(p, TOK_IDENT)) {
         char *name = token_to_str(&p->previous);
 
+        // Enum variant: Name::Variant or Name::Variant(args)
+        if (parser_check(p, TOK_COLONCOLON)) {
+            parser_advance(p);
+            parser_expect(p, TOK_IDENT);
+            char *variant = token_to_str(&p->previous);
+
+            ASTNode *node = ast_new(NODE_ENUM_VARIANT_EXPR, line, col);
+            node->enum_variant_expr.enum_name = name;
+            node->enum_variant_expr.variant_name = variant;
+            node_list_init(&node->enum_variant_expr.args);
+
+            if (parser_match(p, TOK_LPAREN)) {
+                if (!parser_check(p, TOK_RPAREN)) {
+                    node_list_push(&node->enum_variant_expr.args, parse_expression(p));
+                    while (parser_match(p, TOK_COMMA)) {
+                        node_list_push(&node->enum_variant_expr.args, parse_expression(p));
+                    }
+                }
+                parser_expect(p, TOK_RPAREN);
+            }
+            return node;
+        }
+
         // Check for struct literal: Name { field: value, ... }
-        // Only if next token is '{' and it looks like field init
         if (parser_check(p, TOK_LBRACE)) {
             // Peek further to check if it's Name { ident: ...
             // For now, we use a heuristic: if the identifier starts with uppercase
@@ -648,6 +670,25 @@ static ASTNode *parse_match(Parser *p) {
         ASTNode *arm = ast_new(NODE_MATCH_ARM, arm_line, arm_col);
         arm->match_arm.pattern = pattern;
         arm->match_arm.body = body;
+        arm->match_arm.bind_names = NULL;
+        arm->match_arm.bind_count = 0;
+
+        // Extract binding names from enum variant pattern
+        if (pattern && pattern->type == NODE_ENUM_VARIANT_EXPR) {
+            int bc = pattern->enum_variant_expr.args.count;
+            if (bc > 0) {
+                arm->match_arm.bind_names = malloc(sizeof(char *) * bc);
+                arm->match_arm.bind_count = bc;
+                for (int bi = 0; bi < bc; bi++) {
+                    ASTNode *arg = pattern->enum_variant_expr.args.items[bi];
+                    if (arg->type == NODE_IDENT) {
+                        arm->match_arm.bind_names[bi] = arg->ident.name;
+                    } else {
+                        arm->match_arm.bind_names[bi] = "_";
+                    }
+                }
+            }
+        }
         node_list_push(&node->match_expr.arms, arm);
 
         // Comma or newline separator
@@ -926,9 +967,30 @@ static ASTNode *parse_enum_decl(Parser *p, bool is_pub) {
 
     while (!parser_check(p, TOK_RBRACE) && !parser_check(p, TOK_EOF)) {
         parser_expect(p, TOK_IDENT);
-        ASTNode *variant = ast_new(NODE_IDENT, p->previous.line, p->previous.column);
-        variant->ident.name = token_to_str(&p->previous);
-        node_list_push(&node->enum_decl.variants, variant);
+        char *vname = token_to_str(&p->previous);
+        int vline = p->previous.line;
+        int vcol = p->previous.column;
+
+        // Check for associated data: Variant(Type, Type)
+        if (parser_check(p, TOK_LPAREN)) {
+            parser_advance(p);
+            ASTNode *vdef = ast_new(NODE_ENUM_VARIANT_DEF, vline, vcol);
+            vdef->enum_variant_def.name = vname;
+            node_list_init(&vdef->enum_variant_def.field_types);
+            if (!parser_check(p, TOK_RPAREN)) {
+                node_list_push(&vdef->enum_variant_def.field_types, parse_type(p));
+                while (parser_match(p, TOK_COMMA)) {
+                    node_list_push(&vdef->enum_variant_def.field_types, parse_type(p));
+                }
+            }
+            parser_expect(p, TOK_RPAREN);
+            node_list_push(&node->enum_decl.variants, vdef);
+        } else {
+            // Simple variant (no data)
+            ASTNode *variant = ast_new(NODE_IDENT, vline, vcol);
+            variant->ident.name = vname;
+            node_list_push(&node->enum_decl.variants, variant);
+        }
 
         if (!parser_match(p, TOK_COMMA)) {
             skip_newlines(p);

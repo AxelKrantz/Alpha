@@ -49,6 +49,8 @@ typedef enum {
     NODE_REF_EXPR,
     NODE_DEREF_EXPR,
     NODE_LAMBDA,
+    NODE_ENUM_VARIANT_EXPR,  // Shape::Circle(5.0)
+    NODE_ENUM_VARIANT_DEF,   // Circle(f64) in enum declaration
     NODE_MATCH_EXPR,
     NODE_MATCH_ARM,
 
@@ -275,6 +277,19 @@ struct ASTNode {
             int capture_count;
         } lambda;
 
+        // NODE_ENUM_VARIANT_EXPR: Shape::Circle(5.0)
+        struct {
+            char *enum_name;    // "Shape"
+            char *variant_name; // "Circle"
+            NodeList args;      // [5.0]
+        } enum_variant_expr;
+
+        // NODE_ENUM_VARIANT_DEF: Circle(f64) in enum decl
+        struct {
+            char *name;         // "Circle"
+            NodeList field_types; // [NODE_TYPE_BASIC("f64")]
+        } enum_variant_def;
+
         // NODE_MATCH_EXPR
         struct {
             ASTNode *subject;
@@ -283,8 +298,10 @@ struct ASTNode {
 
         // NODE_MATCH_ARM
         struct {
-            ASTNode *pattern; // NULL = wildcard (_)
-            ASTNode *body;    // block or expression
+            ASTNode *pattern;    // NULL = wildcard, NODE_ENUM_VARIANT_EXPR for destructuring
+            ASTNode *body;
+            char **bind_names;   // destructured variable names: [r] or [w, h]
+            int bind_count;
         } match_arm;
 
         // NODE_TYPE_BASIC
