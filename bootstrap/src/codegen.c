@@ -595,8 +595,10 @@ static void emit_builtin_call(CodeGen *gen, const char *name, NodeList *args) {
                             fprintf(gen->out, "%%s");
                         else if (at && at->kind == TYPE_BOOL)
                             fprintf(gen->out, "%%s");
-                        else
+                        else if (at && at->kind != TYPE_UNKNOWN)
                             fprintf(gen->out, "%%lld");
+                        else
+                            fprintf(gen->out, "%%s"); // unknown type — will use _Generic stringify
                     }
                     arg_idx++;
                     p++; // skip }
@@ -620,6 +622,11 @@ static void emit_builtin_call(CodeGen *gen, const char *name, NodeList *args) {
                     fprintf(gen->out, ") ? \"true\" : \"false\"");
                 } else if (at && type_is_integer(at)) {
                     fprintf(gen->out, "(long long)(");
+                    emit_expr(gen, args->items[i]);
+                    fprintf(gen->out, ")");
+                } else if (!at || at->kind == TYPE_UNKNOWN) {
+                    // Unknown type — use _Generic stringify
+                    fprintf(gen->out, "alpha_format_val(");
                     emit_expr(gen, args->items[i]);
                     fprintf(gen->out, ")");
                 } else {
@@ -2297,6 +2304,18 @@ void codegen_emit(CodeGen *gen, ASTNode *program) {
     fprintf(gen->out, "    if (__alpha_recover_jmp) longjmp(*__alpha_recover_jmp, 1);\n");
     fprintf(gen->out, "    fprintf(stderr, \"%%s\\n\", msg); abort();\n");
     fprintf(gen->out, "}\n\n");
+
+    // Generic value-to-string for format() with unknown types
+    fprintf(gen->out, "static inline const char* alpha_fv_i64(int64_t v) { return alpha_i64_to_str(v); }\n");
+    fprintf(gen->out, "static inline const char* alpha_fv_f64(double v) { char* b = malloc(32); snprintf(b, 32, \"%%g\", v); return b; }\n");
+    fprintf(gen->out, "static inline const char* alpha_fv_str(const char* v) { return v; }\n");
+    fprintf(gen->out, "static inline const char* alpha_fv_bool(bool v) { return v ? \"true\" : \"false\"; }\n");
+    fprintf(gen->out, "#define alpha_format_val(v) _Generic((v), \\\n");
+    fprintf(gen->out, "    int64_t: alpha_fv_i64, int: alpha_fv_i64, \\\n");
+    fprintf(gen->out, "    double: alpha_fv_f64, float: alpha_fv_f64, \\\n");
+    fprintf(gen->out, "    char*: alpha_fv_str, const char*: alpha_fv_str, \\\n");
+    fprintf(gen->out, "    _Bool: alpha_fv_bool, \\\n");
+    fprintf(gen->out, "    default: alpha_fv_i64)(v)\n\n");
 
     // Dynamic array types
     fprintf(gen->out, "#define ALPHA_ARRAY_DECL(T, S) \\\n");
