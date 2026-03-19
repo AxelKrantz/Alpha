@@ -897,15 +897,6 @@ static Type *check_expr(Checker *c, ASTNode *node) {
                     const char *ename = pat->enum_variant_expr.enum_name;
                     const char *vname = pat->enum_variant_expr.variant_name;
 
-                    // Search program declarations for the enum
-                    ASTNode *found_variant = NULL;
-                    for (int pi = 0; pi < node->match_expr.subject->line; pi++) {} // dummy
-                    // Walk the program's decls via the checker's stored impls
-                    // Actually, we can find enum variants by looking at the program
-                    // For simplicity, define bindings with types from the subject's resolved type
-                    // The subject has TYPE_ENUM, and we can look up variants
-                    (void)ename; (void)vname; (void)found_variant;
-
                     for (int bi = 0; bi < arm->match_arm.bind_count; bi++) {
                         if (strcmp(arm->match_arm.bind_names[bi], "_") == 0) continue;
                         // Default to unknown — __auto_type handles it in C

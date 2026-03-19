@@ -1187,7 +1187,6 @@ static ASTNode *parse_declaration(Parser *p) {
 void parser_init(Parser *parser, Lexer *lexer, const char *filename) {
     parser->lexer = lexer;
     parser->filename = filename;
-    parser->had_error = false;
     parser->current = lexer_next(lexer);
     parser->previous = parser->current;
 }

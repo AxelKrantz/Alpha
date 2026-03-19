@@ -77,52 +77,52 @@ static void skip_whitespace(Lexer *lexer) {
 
 typedef struct {
     const char *keyword;
+    int length;
     TokenType type;
 } Keyword;
 
 static const Keyword keywords[] = {
-    {"fn",       TOK_FN},
-    {"let",      TOK_LET},
-    {"mut",      TOK_MUT},
-    {"return",   TOK_RETURN},
-    {"if",       TOK_IF},
-    {"else",     TOK_ELSE},
-    {"match",    TOK_MATCH},
-    {"struct",   TOK_STRUCT},
-    {"impl",     TOK_IMPL},
-    {"trait",    TOK_TRAIT},
-    {"enum",     TOK_ENUM},
-    {"while",    TOK_WHILE},
-    {"for",      TOK_FOR},
-    {"in",       TOK_IN},
-    {"break",    TOK_BREAK},
-    {"continue", TOK_CONTINUE},
-    {"import",   TOK_IMPORT},
-    {"pub",      TOK_PUB},
-    {"self",     TOK_SELF},
-    {"defer",    TOK_DEFER},
-    {"test",     TOK_TEST},
-    {"example",  TOK_EXAMPLE},
-    {"requires", TOK_REQUIRES},
-    {"ensures",  TOK_ENSURES},
-    {"invariant",TOK_INVARIANT},
-    {"panics",   TOK_PANICS},
-    {"recover",  TOK_RECOVER},
-    {"true",     TOK_TRUE},
-    {"false",    TOK_FALSE},
-    {"None",     TOK_NONE},
-    {"none",     TOK_NONE},
-    {"and",      TOK_AND},
-    {"or",       TOK_OR},
-    {"not",      TOK_NOT},
-    {"type",     TOK_TYPE},
-    {NULL,       TOK_ERROR},
+    {"fn",       2, TOK_FN},
+    {"if",       2, TOK_IF},
+    {"in",       2, TOK_IN},
+    {"or",       2, TOK_OR},
+    {"let",      3, TOK_LET},
+    {"mut",      3, TOK_MUT},
+    {"for",      3, TOK_FOR},
+    {"pub",      3, TOK_PUB},
+    {"and",      3, TOK_AND},
+    {"not",      3, TOK_NOT},
+    {"enum",     4, TOK_ENUM},
+    {"else",     4, TOK_ELSE},
+    {"impl",     4, TOK_IMPL},
+    {"self",     4, TOK_SELF},
+    {"test",     4, TOK_TEST},
+    {"true",     4, TOK_TRUE},
+    {"type",     4, TOK_TYPE},
+    {"None",     4, TOK_NONE},
+    {"none",     4, TOK_NONE},
+    {"while",    5, TOK_WHILE},
+    {"break",    5, TOK_BREAK},
+    {"match",    5, TOK_MATCH},
+    {"trait",    5, TOK_TRAIT},
+    {"defer",    5, TOK_DEFER},
+    {"false",    5, TOK_FALSE},
+    {"return",   6, TOK_RETURN},
+    {"struct",   6, TOK_STRUCT},
+    {"import",   6, TOK_IMPORT},
+    {"panics",   6, TOK_PANICS},
+    {"example",  7, TOK_EXAMPLE},
+    {"ensures",  7, TOK_ENSURES},
+    {"recover",  7, TOK_RECOVER},
+    {"continue", 8, TOK_CONTINUE},
+    {"requires", 8, TOK_REQUIRES},
+    {"invariant",9, TOK_INVARIANT},
+    {NULL,       0, TOK_ERROR},
 };
 
 static TokenType check_keyword(const char *start, int length) {
     for (int i = 0; keywords[i].keyword != NULL; i++) {
-        int kw_len = (int)strlen(keywords[i].keyword);
-        if (kw_len == length && memcmp(start, keywords[i].keyword, length) == 0) {
+        if (keywords[i].length == length && memcmp(start, keywords[i].keyword, length) == 0) {
             return keywords[i].type;
         }
     }
@@ -351,7 +351,7 @@ static Token lexer_next_raw(Lexer *lexer) {
             lexer->paren_depth++;
             return make_token(lexer, TOK_LPAREN, start, line, col);
         case ')':
-            lexer->paren_depth--;
+            if (lexer->paren_depth > 0) lexer->paren_depth--;
             return make_token(lexer, TOK_RPAREN, start, line, col);
         case '{':
             return make_token(lexer, TOK_LBRACE, start, line, col);
@@ -361,7 +361,7 @@ static Token lexer_next_raw(Lexer *lexer) {
             lexer->paren_depth++;
             return make_token(lexer, TOK_LBRACKET, start, line, col);
         case ']':
-            lexer->paren_depth--;
+            if (lexer->paren_depth > 0) lexer->paren_depth--;
             return make_token(lexer, TOK_RBRACKET, start, line, col);
     }
 
@@ -374,6 +374,7 @@ Token lexer_peek(Lexer *lexer) {
     int saved_line = lexer->line;
     int saved_column = lexer->column;
     int saved_depth = lexer->paren_depth;
+    TokenType saved_last = lexer->last_type;
 
     Token tok = lexer_next(lexer);
 
@@ -382,6 +383,7 @@ Token lexer_peek(Lexer *lexer) {
     lexer->line = saved_line;
     lexer->column = saved_column;
     lexer->paren_depth = saved_depth;
+    lexer->last_type = saved_last;
 
     return tok;
 }

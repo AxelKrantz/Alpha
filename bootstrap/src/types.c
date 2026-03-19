@@ -414,15 +414,5 @@ Type *type_substitute(TypeTable *tt, Type *t, int param_count, Type **concrete) 
 
 const char *type_array_suffix(Type *elem) {
     if (!elem) return "i64";
-    switch (elem->kind) {
-        case TYPE_I64: case TYPE_I32: case TYPE_I16: case TYPE_I8: return "i64";
-        case TYPE_U64: case TYPE_U32: case TYPE_U16: return "i64";
-        case TYPE_U8: return "u8";
-        case TYPE_F64: case TYPE_F32: return "f64";
-        case TYPE_STR: return "str";
-        case TYPE_BOOL: return "bool";
-        case TYPE_STRUCT: return elem->name ? elem->name : "i64";
-        case TYPE_ENUM: return elem->name ? elem->name : "i64";
-        default: return "i64";
-    }
+    return type_mangle_suffix(elem);
 }

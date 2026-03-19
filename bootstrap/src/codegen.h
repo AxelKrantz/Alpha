@@ -38,8 +38,5 @@ typedef struct {
 
 void codegen_init(CodeGen *gen, FILE *out);
 void codegen_emit(CodeGen *gen, ASTNode *program);
-// For generics: pass type table to emit monomorphized functions
-struct TypeTable;
-void codegen_set_types(CodeGen *gen, struct TypeTable *types);
 
 #endif

@@ -9,7 +9,6 @@ typedef struct {
     Token current;
     Token previous;
     const char *filename;
-    bool had_error;
 } Parser;
 
 void parser_init(Parser *parser, Lexer *lexer, const char *filename);

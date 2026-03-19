@@ -30,8 +30,11 @@ void codegen_init(CodeGen *gen, FILE *out) {
 }
 
 static void emit_indent(CodeGen *gen) {
-    for (int i = 0; i < gen->indent; i++) {
-        fprintf(gen->out, "    ");
+    static const char spaces[] = "                                        "; // 40 spaces
+    int n = gen->indent * 4;
+    if (n > 0) {
+        if (n > 40) n = 40;
+        fwrite(spaces, 1, n, gen->out);
     }
 }
 
@@ -522,16 +525,10 @@ static void emit_builtin_call(CodeGen *gen, const char *name, NodeList *args) {
         return;
     }
 
-    if (strcmp(name, "len") == 0) {
-        if (args->count == 1 && args->items[0]->type == NODE_STRING_LIT) {
-            fprintf(gen->out, "strlen(");
-            emit_expr(gen, args->items[0]);
-            fprintf(gen->out, ")");
-        } else {
-            fprintf(gen->out, "strlen(");
-            emit_expr(gen, args->items[0]);
-            fprintf(gen->out, ")");
-        }
+    if (strcmp(name, "len") == 0 && args->count > 0) {
+        fprintf(gen->out, "(int64_t)strlen(");
+        emit_expr(gen, args->items[0]);
+        fprintf(gen->out, ")");
         return;
     }
 
@@ -864,39 +861,7 @@ static void emit_builtin_call(CodeGen *gen, const char *name, NodeList *args) {
         return;
     }
 
-    // Test assertion builtins
-    if (strcmp(name, "assert_eq") == 0 && args->count == 2) {
-        fprintf(gen->out, "alpha_assert_eq(");
-        emit_expr(gen, args->items[0]);
-        fprintf(gen->out, ", ");
-        emit_expr(gen, args->items[1]);
-        fprintf(gen->out, ", \"%s\", %d)", gen->current_struct ? gen->current_struct : "", args->items[0]->line);
-        return;
-    }
-    if (strcmp(name, "assert_neq") == 0 && args->count == 2) {
-        fprintf(gen->out, "alpha_assert_neq(");
-        emit_expr(gen, args->items[0]);
-        fprintf(gen->out, ", ");
-        emit_expr(gen, args->items[1]);
-        fprintf(gen->out, ", \"%s\", %d)", gen->current_struct ? gen->current_struct : "", args->items[0]->line);
-        return;
-    }
-    if (strcmp(name, "assert_lt") == 0 && args->count == 2) {
-        fprintf(gen->out, "alpha_assert_lt(");
-        emit_expr(gen, args->items[0]);
-        fprintf(gen->out, ", ");
-        emit_expr(gen, args->items[1]);
-        fprintf(gen->out, ", \"%s\", %d)", gen->current_struct ? gen->current_struct : "", args->items[0]->line);
-        return;
-    }
-    if (strcmp(name, "assert_gt") == 0 && args->count == 2) {
-        fprintf(gen->out, "alpha_assert_gt(");
-        emit_expr(gen, args->items[0]);
-        fprintf(gen->out, ", ");
-        emit_expr(gen, args->items[1]);
-        fprintf(gen->out, ", \"%s\", %d)", gen->current_struct ? gen->current_struct : "", args->items[0]->line);
-        return;
-    }
+    // Legacy assertion builtins handled by smart assert path above
 }
 
 static void emit_expr(CodeGen *gen, ASTNode *node) {
