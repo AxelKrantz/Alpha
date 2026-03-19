@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x86_64
+          - os: macos-latest
+            name: macos-arm64
+          - os: macos-13
+            name: macos-x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          cd bootstrap
+          make
+          mv alphac alphac-${{ matrix.name }}
+
+      - name: Test
+        run: cd bootstrap && make test
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: alphac-${{ matrix.name }}
+          path: bootstrap/alphac-${{ matrix.name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            alphac-linux-x86_64/alphac-linux-x86_64
+            alphac-macos-arm64/alphac-macos-arm64
+            alphac-macos-x86_64/alphac-macos-x86_64
+          generate_release_notes: true

@@ -4,13 +4,26 @@ A compiled, statically-typed programming language designed to be the easiest lan
 
 Alpha compiles to C, then to native binaries. It's fast, safe, and self-hosting.
 
-## Quick Start
+## Install
 
+**One-liner:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/AxelKrantz/Alpha/main/install.sh | sh
+```
+
+**Or from source:**
 ```bash
 git clone https://github.com/AxelKrantz/Alpha.git
 cd Alpha/bootstrap
-make
-./alphac ../examples/hello.alpha -o hello && ./hello
+make && sudo make install
+```
+
+**Or download a binary** from [GitHub Releases](https://github.com/AxelKrantz/Alpha/releases).
+
+## Quick Start
+
+```bash
+alphac examples/hello.alpha -o hello && ./hello
 ```
 
 ## What Makes Alpha Different

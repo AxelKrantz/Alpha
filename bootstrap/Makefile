@@ -3,7 +3,7 @@ CFLAGS = -Wall -Wextra -O2 -std=c11
 SRC = src/main.c src/lexer.c src/parser.c src/ast.c src/codegen.c src/types.c src/checker.c src/error.c
 OUT = alphac
 
-.PHONY: all clean test
+.PHONY: all clean test install uninstall
 
 all: $(OUT)
 
@@ -12,6 +12,14 @@ $(OUT): $(SRC)
 
 debug: CFLAGS = -Wall -Wextra -g -O0 -std=c11 -DDEBUG
 debug: $(OUT)
+
+install: $(OUT)
+	cp $(OUT) /usr/local/bin/alphac
+	@echo "alphac installed to /usr/local/bin/alphac"
+
+uninstall:
+	rm -f /usr/local/bin/alphac
+	@echo "alphac removed"
 
 clean:
 	rm -f $(OUT)
