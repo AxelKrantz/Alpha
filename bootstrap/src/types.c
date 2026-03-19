@@ -216,10 +216,8 @@ const char *type_to_c(Type *t) {
         case TYPE_STRUCT:  return t->name ? t->name : "void";
         case TYPE_ENUM:    return t->name ? t->name : "int";
         case TYPE_ARRAY: {
-            static char arr_buf[128];
+            char arr_buf[128];
             if (t->array_info.element) {
-                const char *elem = type_to_c(t->array_info.element);
-                // Map element C type to suffix
                 const char *suffix = "i64";
                 if (t->array_info.element->kind == TYPE_F64) suffix = "f64";
                 else if (t->array_info.element->kind == TYPE_F32) suffix = "f64";
@@ -231,7 +229,6 @@ const char *type_to_c(Type *t) {
                 else if (t->array_info.element->kind == TYPE_ENUM && t->array_info.element->name)
                     suffix = t->array_info.element->name;
                 snprintf(arr_buf, sizeof(arr_buf), "AlphaArr_%s", suffix);
-                (void)elem;
             } else {
                 snprintf(arr_buf, sizeof(arr_buf), "AlphaArr_i64");
             }
@@ -240,19 +237,19 @@ const char *type_to_c(Type *t) {
         case TYPE_REF:     return "void*";
         case TYPE_FN:      return "void*";
         case TYPE_OPTION: {
-            static char opt_buf[128];
+            char opt_buf[128];
             const char *suffix = t->option_info.inner_type ? type_array_suffix(t->option_info.inner_type) : "i64";
             snprintf(opt_buf, sizeof(opt_buf), "AlphaOpt_%s", suffix);
             return strdup(opt_buf);
         }
         case TYPE_MAP: {
-            static char map_buf[128];
+            char map_buf[128];
             const char *suffix = t->map_info.value_type ? type_array_suffix(t->map_info.value_type) : "i64";
             snprintf(map_buf, sizeof(map_buf), "AlphaMap_%s", suffix);
             return strdup(map_buf);
         }
         case TYPE_RESULT: {
-            static char res_buf[128];
+            char res_buf[128];
             const char *suffix = t->result_info.ok_type ? type_array_suffix(t->result_info.ok_type) : "i64";
             snprintf(res_buf, sizeof(res_buf), "AlphaResult_%s", suffix);
             return strdup(res_buf);

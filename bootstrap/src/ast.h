@@ -7,7 +7,9 @@
 #define GROW_ARRAY(ptr, count, cap, type) do { \
     if ((count) >= (cap)) { \
         (cap) = (cap) ? (cap) * 2 : 8; \
-        (ptr) = realloc((ptr), sizeof(type) * (cap)); \
+        void *_new = realloc((ptr), sizeof(type) * (cap)); \
+        if (!_new) { fprintf(stderr, "fatal: out of memory\n"); exit(1); } \
+        (ptr) = _new; \
     } \
 } while(0)
 #include <stdint.h>

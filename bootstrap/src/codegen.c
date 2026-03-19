@@ -31,10 +31,11 @@ void codegen_init(CodeGen *gen, FILE *out) {
 }
 
 static void emit_indent(CodeGen *gen) {
-    static const char spaces[] = "                                        "; // 40 spaces
+    static const char spaces[] =
+        "                                                                                "; // 80 spaces
     int n = gen->indent * 4;
     if (n > 0) {
-        if (n > 40) n = 40;
+        if (n > 80) n = 80;
         fwrite(spaces, 1, n, gen->out);
     }
 }
@@ -1051,8 +1052,6 @@ static void emit_expr(CodeGen *gen, ASTNode *node) {
             Type *obj_type = node->method_call.object->resolved_type;
             const char *method = node->method_call.method;
 
-            (void)node->method_call.args.count; // args validated by checker
-
             // Substitute type params in generic context
             if (gen->subst_count > 0 && obj_type) {
                 if (obj_type->kind == TYPE_PARAM) {
@@ -1416,11 +1415,8 @@ static void emit_expr(CodeGen *gen, ASTNode *node) {
         }
 
         case NODE_LAMBDA: {
-            // Assign a unique ID and register for hoisting
-            int id = gen->lambda_count++;
-            node->lambda.id = id;
-            GROW_ARRAY(gen->lambdas, id, gen->lambda_cap, ASTNode *);
-            gen->lambdas[id] = node;
+            // Use ID assigned by the pre-scan walker
+            int id = node->lambda.id;
 
             // If lambda captures variables, set the static capture vars before use
             if (node->lambda.capture_count > 0) {
@@ -2600,6 +2596,8 @@ void codegen_emit(CodeGen *gen, ASTNode *program) {
                 for (int m = 0; m < decl->impl_trait.methods.count && scan_top < 255; m++)
                     if (decl->impl_trait.methods.items[m]->fn_decl.body)
                         scan_stack[scan_top++] = decl->impl_trait.methods.items[m]->fn_decl.body;
+            } else if (decl->type == NODE_TEST_DECL && decl->test_decl.body) {
+                scan_stack[scan_top++] = decl->test_decl.body;
             }
 
             while (scan_top > 0) {
@@ -2664,11 +2662,34 @@ void codegen_emit(CodeGen *gen, ASTNode *program) {
                         }
                         break;
                     case NODE_DEFER_STMT: if (scan_top < 255) scan_stack[scan_top++] = n->defer_stmt.stmt; break;
+                    case NODE_FIELD_ACCESS: if (scan_top < 255) scan_stack[scan_top++] = n->field_access.object; break;
+                    case NODE_INDEX_EXPR:
+                        if (scan_top < 254) { scan_stack[scan_top++] = n->index_expr.object; scan_stack[scan_top++] = n->index_expr.index; }
+                        break;
+                    case NODE_REF_EXPR: if (scan_top < 255) scan_stack[scan_top++] = n->ref_expr.operand; break;
+                    case NODE_DEREF_EXPR: if (scan_top < 255) scan_stack[scan_top++] = n->deref_expr.operand; break;
+                    case NODE_TRY_EXPR: if (scan_top < 255) scan_stack[scan_top++] = n->try_expr.operand; break;
+                    case NODE_STRUCT_LIT:
+                        for (int j = 0; j < n->struct_lit.values.count && scan_top < 255; j++)
+                            scan_stack[scan_top++] = n->struct_lit.values.items[j];
+                        break;
+                    case NODE_ARRAY_LIT:
+                        for (int j = 0; j < n->array_lit.elements.count && scan_top < 255; j++)
+                            scan_stack[scan_top++] = n->array_lit.elements.items[j];
+                        break;
+                    case NODE_ENUM_VARIANT_EXPR:
+                        for (int j = 0; j < n->enum_variant_expr.args.count && scan_top < 255; j++)
+                            scan_stack[scan_top++] = n->enum_variant_expr.args.items[j];
+                        break;
+                    case NODE_LAMBDA:
+                        if (n->lambda.body && scan_top < 255) scan_stack[scan_top++] = n->lambda.body;
+                        break;
                     default: break;
                 }
             }
         }
-        gen->lambda_count = 0; // reset — will be re-assigned during actual emission
+        // Lambda IDs are assigned by the walker above. The emit_expr NODE_LAMBDA
+        // handler reuses node->lambda.id (does not reassign).
 
         // Now emit the collected lambda functions
         for (int i = 0; i < gen->lambda_count; i++) {
